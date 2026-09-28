@@ -24,6 +24,19 @@ object CarCanBus {
 
     private var port: UsbSerialPort? = null
 
+    // ⭐ Listener for CAN debug UI
+    private var listener: ((CANFrame) -> Unit)? = null
+
+    // ⭐ Simple CAN frame model
+    data class CANFrame(
+        val id: Int,
+        val data: ByteArray
+    )
+
+    fun setListener(callback: (CANFrame) -> Unit) {
+        listener = callback
+    }
+
     fun initialize(context: Context) {
         try {
             val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -33,7 +46,7 @@ object CarCanBus {
                 UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
 
             if (availableDrivers.isEmpty()) {
-                Log.e(TAG, "No USB serial drivers found")
+                Log.e(TAG, "No USB serial drivers found — simulation mode")
                 return
             }
 
@@ -63,6 +76,10 @@ object CarCanBus {
 
     fun send(frameId: Int, data: ByteArray) {
         val p = port
+
+        // ⭐ Notify debug UI even in simulation mode
+        listener?.invoke(CANFrame(frameId, data))
+
         if (p == null) {
             Log.w(TAG, "CAN bus not initialized — simulation only")
             return
