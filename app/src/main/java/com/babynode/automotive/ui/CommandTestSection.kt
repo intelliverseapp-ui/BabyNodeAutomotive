@@ -4,17 +4,19 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.babynode.automotive.CarCommandDetector
 import com.babynode.automotive.CarCommandDispatcher
+import com.babynode.automotive.CarStatusEvent
 
 @Composable
-fun CommandTestSection() {
+fun CommandTestSection(
+    dispatcher: CarCommandDispatcher,
+    status: CarStatusEvent?
+) {
 
     var commandText by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("Ready") }
-    val context = LocalContext.current
+    var localStatus by remember { mutableStateOf("Ready") }
 
     Column(modifier = Modifier.fillMaxWidth()) {
 
@@ -39,10 +41,10 @@ fun CommandTestSection() {
         Button(
             onClick = {
                 if (CarCommandDetector.isAutomotive(commandText)) {
-                    CarCommandDispatcher.handle(context, commandText)
-                    status = "Executed: $commandText"
+                    dispatcher.handle(commandText)
+                    localStatus = "Executed: $commandText"
                 } else {
-                    status = "Not an automotive command"
+                    localStatus = "Not an automotive command"
                 }
             }
         ) {
@@ -51,9 +53,23 @@ fun CommandTestSection() {
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // ⭐ Status output
+        // ⭐ Status output (local + transport status)
         Text(
-            text = status,
+            text = buildString {
+                append(localStatus)
+                if (status != null) {
+                    append("\nTransport: ")
+                    append(
+                        when (status) {
+                            is CarStatusEvent.Connected -> "Connected (${status.transportName})"
+                            is CarStatusEvent.Disconnected -> "Disconnected (${status.transportName})"
+                            is CarStatusEvent.Error -> "Error: ${status.message}"
+                            is CarStatusEvent.FrameReceived -> "Frame received: ID=${status.frame.id}"
+                            is CarStatusEvent.FrameSent -> "Frame sent: ID=${status.frame.id}"
+                        }
+                    )
+                }
+            },
             style = MaterialTheme.typography.bodyMedium
         )
     }

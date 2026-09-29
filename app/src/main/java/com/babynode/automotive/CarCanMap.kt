@@ -105,7 +105,15 @@ object CarCanMap {
         "CRUISE_ON"     to CanFrame(0xA01, byteArrayOf(0x01)),
         "CRUISE_OFF"    to CanFrame(0xA01, byteArrayOf(0x00)),
         "CRUISE_RESUME" to CanFrame(0xA02, byteArrayOf(0x01)),
-        "CRUISE_CANCEL" to CanFrame(0xA03, byteArrayOf(0x01))
+        "CRUISE_CANCEL" to CanFrame(0xA03, byteArrayOf(0x01)),
+
+        // ============================================================
+        // AUDIO / INFOTAINMENT
+        // ============================================================
+        "AUDIO_MUTE"        to CanFrame(0xB00, byteArrayOf(0x01)),
+        "AUDIO_UNMUTE"      to CanFrame(0xB00, byteArrayOf(0x00)),
+        "AUDIO_VOLUME_UP"   to CanFrame(0xB01, byteArrayOf(0x01)),
+        "AUDIO_VOLUME_DOWN" to CanFrame(0xB01, byteArrayOf(0x02))
     )
 
     /**
@@ -113,14 +121,10 @@ object CarCanMap {
      * Supports dynamic CRUISE_SET_XX commands.
      */
     fun lookup(command: String): CanFrame? {
-        // Dynamic cruise control speed:
-        // e.g., "CRUISE_SET_65"
         if (command.startsWith("CRUISE_SET_")) {
             val speedStr = command.removePrefix("CRUISE_SET_")
             val speed = speedStr.toIntOrNull()
             if (speed != null) {
-                // CAN ID 0xA10 — cruise set speed
-                // Payload: [speed]
                 return CanFrame(0xA10, byteArrayOf(speed.toByte()))
             }
         }

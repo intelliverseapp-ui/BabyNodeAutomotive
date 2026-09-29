@@ -1,7 +1,8 @@
 package com.babynode.automotive
 
-import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * CarCommandDispatcher
@@ -10,15 +11,18 @@ import android.util.Log
  * Take a canonical automotive command and execute it.
  *
  * Pipeline:
- *   Natural language → CarCommandMap → CAN frame → CarCanBus
+ *   Natural language → CarCommandMap → CAN frame → CarCanTransport
  *
  * Now includes unified automotive logging.
  */
-object CarCommandDispatcher {
+class CarCommandDispatcher(
+    private val scope: CoroutineScope,
+    private val transport: CarCanTransport
+) {
 
-    private const val TAG = "CarCommandDispatcher"
+    private val TAG = "CarCommandDispatcher"
 
-    fun handle(context: Context, text: String) {
+    fun handle(text: String) {
         Log.i(TAG, "AUTOMOTIVE ENTER: $text")
 
         // Step 1 — Convert natural language → canonical command
@@ -40,8 +44,15 @@ object CarCommandDispatcher {
         // Step 3 — Unified automotive logging
         logAutomotiveEvent(text, command, frame)
 
-        // Step 4 — Send CAN frame
-        CarCanBus.send(frame.id, frame.data)
+        // Step 4 — Send CAN frame via transport abstraction
+        scope.launch {
+            transport.sendFrame(
+                CarCanFrame(
+                    id = frame.id,
+                    data = frame.data
+                )
+            )
+        }
 
         // Step 5 — Automotive feedback (log only)
         Log.i(TAG, "Executing automotive command: $command")
@@ -65,7 +76,7 @@ object CarCommandDispatcher {
         val idHex = "0x${frame.id.toString(16)}"
         val payloadHex = frame.data.joinToString(" ") { "0x%02X".format(it) }
 
-        // Build the USB packet exactly as CarCanBus will send it
+        // Build the USB packet exactly as CarCanBus used to send it
         val usbPacket = buildUsbPacketPreview(frame.id, frame.data)
         val usbHex = usbPacket.joinToString(" ") { "0x%02X".format(it) }
 

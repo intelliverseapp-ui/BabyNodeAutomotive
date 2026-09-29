@@ -88,6 +88,17 @@ object CarCommandDetector {
     )
 
     // ============================================================
+    // AUDIO / INFOTAINMENT
+    // ============================================================
+    private val audioKeywords = listOf(
+        "mute", "unmute",
+        "volume", "volume up", "volume down",
+        "increase volume", "decrease volume",
+        "raise volume", "lower volume",
+        "audio", "sound"
+    )
+
+    // ============================================================
     // Combined automotive vocabulary
     // ============================================================
     private val automotiveVocabulary =
@@ -99,7 +110,8 @@ object CarCommandDetector {
         roofKeywords +
         wiperKeywords +
         mirrorKeywords +
-        seatKeywords
+        seatKeywords +
+        audioKeywords
 
     // ============================================================
     // Detection (pure automotive)
@@ -112,7 +124,9 @@ object CarCommandDetector {
         }
 
         if (match) {
-            Log.d(TAG, "Automotive match detected for: $text")
+            Log.d(TAG, "Automotive match detected for: \"$text\"")
+        } else {
+            Log.d(TAG, "NO automotive match for: \"$text\"")
         }
 
         return match

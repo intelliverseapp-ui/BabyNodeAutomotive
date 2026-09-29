@@ -129,6 +129,21 @@ object CarCommandMap {
         }
 
         // ============================================================
+        // AUDIO / INFOTAINMENT
+        // ============================================================
+        if (t.contains("mute") && t.contains("volume")) return "AUDIO_MUTE"
+        if (t.contains("unmute") && t.contains("volume")) return "AUDIO_UNMUTE"
+
+        if (t.contains("volume") && t.contains("up")) return "AUDIO_VOLUME_UP"
+        if (t.contains("volume") && t.contains("down")) return "AUDIO_VOLUME_DOWN"
+
+        if (t.contains("increase") && t.contains("volume")) return "AUDIO_VOLUME_UP"
+        if (t.contains("decrease") && t.contains("volume")) return "AUDIO_VOLUME_DOWN"
+
+        if (t.contains("raise") && t.contains("volume")) return "AUDIO_VOLUME_UP"
+        if (t.contains("lower") && t.contains("volume")) return "AUDIO_VOLUME_DOWN"
+
+        // ============================================================
         // FALLBACK
         // ============================================================
         return "UNKNOWN_AUTOMOTIVE_COMMAND"

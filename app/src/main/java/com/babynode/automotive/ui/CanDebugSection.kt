@@ -7,17 +7,20 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.babynode.automotive.CarCanBus
+import com.babynode.automotive.CarStatusEvent
 
 @Composable
-fun CanDebugSection() {
+fun CanDebugSection(
+    status: CarStatusEvent?
+) {
 
     // ⭐ CAN log buffer (updated continuously)
     val canLog = remember { mutableStateListOf<String>() }
 
-    // ⭐ Subscribe to CAN bus updates
-    LaunchedEffect(Unit) {
-        CarCanBus.setListener { frame ->
+    // ⭐ Update CAN log when unified status reports a frame
+    LaunchedEffect(status) {
+        if (status is CarStatusEvent.FrameReceived) {
+            val frame = status.frame
             val formatted = "ID=${frame.id}  DATA=${frame.data.joinToString(" ")}"
             canLog.add(formatted)
 
