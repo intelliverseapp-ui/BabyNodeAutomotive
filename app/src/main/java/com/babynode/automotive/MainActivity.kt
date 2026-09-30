@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
                     }
 
                     transport = when (selectedTransport) {
-                        "USB" -> CarCanBusUsb(this@MainActivity, scope)
+                        "TCP" -> CarCanBusTcp("192.168.4.1", 1234)
                         else -> CarCanBusMock(scope)
                     }
 

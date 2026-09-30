@@ -3,7 +3,9 @@ package com.babynode.automotive
 import kotlinx.coroutines.flow.Flow
 
 /**
- * Abstraction over any CAN transport (USB, Wi-Fi, etc.).
+ * Abstraction over any CAN transport (Mock, TCP).
+ *
+ * USB has been removed from the architecture.
  */
 interface CarCanTransport {
 
@@ -33,6 +35,9 @@ data class CarCanFrame(
     val data: ByteArray
 )
 
+/**
+ * Unified status events emitted by any transport.
+ */
 sealed class CarStatusEvent {
     data class Connected(val transportName: String) : CarStatusEvent()
     data class Disconnected(val transportName: String) : CarStatusEvent()

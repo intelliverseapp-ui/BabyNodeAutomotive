@@ -6,10 +6,10 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 
 /**
- * Mock transport for testing without USB/WiFi/DuoCAN hardware.
+ * Mock transport for testing without TCP/DuoCAN hardware.
  *
  * ONE RESPONSIBILITY:
- * Simulate sending and receiving CAN frames.
+ * Simulate sending and receiving CAN frames exactly like the real TCP transport.
  */
 class CarCanBusMock(
     private val scope: CoroutineScope
@@ -19,23 +19,23 @@ class CarCanBusMock(
 
     override suspend fun connect() {
         scope.launch {
-            statusFlow.emit(CarStatusEvent.Connected("MOCK"))
+            statusFlow.emit(CarStatusEvent.Connected("Mock"))
         }
     }
 
     override suspend fun disconnect() {
         scope.launch {
-            statusFlow.emit(CarStatusEvent.Disconnected("MOCK"))
+            statusFlow.emit(CarStatusEvent.Disconnected("Mock"))
         }
     }
 
     override suspend fun sendFrame(frame: CarCanFrame) {
-        // Simulate sending
+        // Simulate TX event (same as TCP)
         scope.launch {
             statusFlow.emit(CarStatusEvent.FrameSent(frame))
         }
 
-        // Simulate DuoCAN ACK
+        // Simulate RX event (same shape as DuoCAN CAN_RX)
         scope.launch {
             val ack = CarCanFrame(
                 id = 0xFFFF,

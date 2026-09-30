@@ -81,11 +81,11 @@ fun AutomotiveScreen(
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("USB") },
+                    text = { Text("TCP") },
                     onClick = {
-                        selectedTransport = "USB"
+                        selectedTransport = "TCP"
                         expanded = false
-                        onTransportSelected("USB")
+                        onTransportSelected("TCP")
                     }
                 )
             }

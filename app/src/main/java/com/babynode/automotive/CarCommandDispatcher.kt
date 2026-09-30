@@ -13,7 +13,7 @@ import kotlinx.coroutines.launch
  * Pipeline:
  *   Natural language → CarCommandMap → CAN frame → CarCanTransport
  *
- * Now includes unified automotive logging.
+ * Now includes unified automotive logging (CAN-only, USB removed).
  */
 class CarCommandDispatcher(
     private val scope: CoroutineScope,
@@ -66,7 +66,6 @@ class CarCommandDispatcher(
      *  - Canonical command
      *  - CAN frame ID
      *  - CAN payload (bytes)
-     *  - USB serial packet (hex)
      */
     private fun logAutomotiveEvent(
         natural: String,
@@ -76,29 +75,11 @@ class CarCommandDispatcher(
         val idHex = "0x${frame.id.toString(16)}"
         val payloadHex = frame.data.joinToString(" ") { "0x%02X".format(it) }
 
-        // Build the USB packet exactly as CarCanBus used to send it
-        val usbPacket = buildUsbPacketPreview(frame.id, frame.data)
-        val usbHex = usbPacket.joinToString(" ") { "0x%02X".format(it) }
-
         Log.i(TAG, "================ AUTOMOTIVE COMMAND ================")
         Log.i(TAG, "Natural language : $natural")
         Log.i(TAG, "Canonical command: $command")
         Log.i(TAG, "CAN frame ID     : $idHex")
         Log.i(TAG, "CAN payload      : $payloadHex")
-        Log.i(TAG, "USB packet       : $usbHex")
         Log.i(TAG, "====================================================")
-    }
-
-    /**
-     * Build USB packet preview (same format as CarCanBus)
-     */
-    private fun buildUsbPacketPreview(frameId: Int, data: ByteArray): ByteArray {
-        val header = byteArrayOf(
-            0xAA.toByte(),
-            ((frameId shr 8) and 0xFF).toByte(),
-            (frameId and 0xFF).toByte(),
-            data.size.toByte()
-        )
-        return header + data
     }
 }

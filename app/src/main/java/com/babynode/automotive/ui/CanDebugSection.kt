@@ -14,20 +14,44 @@ fun CanDebugSection(
     status: CarStatusEvent?
 ) {
 
-    // ⭐ CAN log buffer (updated continuously)
-    val canLog = remember { mutableStateListOf<String>() }
+    // ⭐ Unified CAN + Transport log buffer
+    val log = remember { mutableStateListOf<String>() }
 
-    // ⭐ Update CAN log when unified status reports a frame
+    // ⭐ Update log whenever a new status event arrives
     LaunchedEffect(status) {
-        if (status is CarStatusEvent.FrameReceived) {
-            val frame = status.frame
-            val formatted = "ID=${frame.id}  DATA=${frame.data.joinToString(" ")}"
-            canLog.add(formatted)
+        when (status) {
 
-            // ⭐ Keep log from growing forever
-            if (canLog.size > 200) {
-                canLog.removeFirst()
+            is CarStatusEvent.Connected -> {
+                log.add("CONNECTED: ${status.transportName}")
             }
+
+            is CarStatusEvent.Disconnected -> {
+                log.add("DISCONNECTED: ${status.transportName}")
+            }
+
+            is CarStatusEvent.Error -> {
+                val msg = status.message
+                log.add("ERROR: $msg")
+            }
+
+            is CarStatusEvent.FrameSent -> {
+                val frame = status.frame
+                val formatted = "TX ID=${frame.id}  DATA=${frame.data.joinToString(" ")}"
+                log.add(formatted)
+            }
+
+            is CarStatusEvent.FrameReceived -> {
+                val frame = status.frame
+                val formatted = "RX ID=${frame.id}  DATA=${frame.data.joinToString(" ")}"
+                log.add(formatted)
+            }
+
+            null -> {}
+        }
+
+        // ⭐ Keep log from growing forever
+        if (log.size > 200) {
+            log.removeFirst()
         }
     }
 
@@ -40,7 +64,7 @@ fun CanDebugSection(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // ⭐ Scrolling CAN log window
+        // ⭐ Scrolling CAN + Transport log window
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -48,7 +72,7 @@ fun CanDebugSection(
                 .verticalScroll(rememberScrollState())
                 .padding(8.dp)
         ) {
-            for (line in canLog) {
+            for (line in log) {
                 Text(
                     text = line,
                     style = MaterialTheme.typography.bodyMedium
