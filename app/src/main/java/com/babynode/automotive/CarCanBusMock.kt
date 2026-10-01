@@ -1,9 +1,8 @@
 package com.babynode.automotive
 
-import kotlinx.coroutines.CoroutineScope
+import android.util.Log
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.launch
 
 /**
  * Mock transport for testing without TCP/DuoCAN hardware.
@@ -11,42 +10,49 @@ import kotlinx.coroutines.launch
  * ONE RESPONSIBILITY:
  * Simulate sending and receiving CAN frames exactly like the real TCP transport.
  */
-class CarCanBusMock(
-    private val scope: CoroutineScope
-) : CarCanTransport {
+class CarCanBusMock : CarCanTransport {
+
+    private val TAG = "CarCanBusMock"
 
     private val statusFlow = MutableSharedFlow<CarStatusEvent>(extraBufferCapacity = 64)
 
     override suspend fun connect() {
-        scope.launch {
-            statusFlow.emit(CarStatusEvent.Connected("Mock"))
-        }
+        Log.i(TAG, "connect(): Mock transport connecting")
+        statusFlow.emit(CarStatusEvent.Connected("Mock"))
+        Log.i(TAG, "connect(): Mock transport connected")
     }
 
     override suspend fun disconnect() {
-        scope.launch {
-            statusFlow.emit(CarStatusEvent.Disconnected("Mock"))
-        }
+        Log.i(TAG, "disconnect(): Mock transport disconnecting")
+        statusFlow.emit(CarStatusEvent.Disconnected("Mock"))
+        Log.i(TAG, "disconnect(): Mock transport disconnected")
     }
 
     override suspend fun sendFrame(frame: CarCanFrame) {
-        // Simulate TX event (same as TCP)
-        scope.launch {
-            statusFlow.emit(CarStatusEvent.FrameSent(frame))
-        }
+        Log.i(TAG, "sendFrame(): Sending mock CAN frame id=${frame.id}, bytes=${frame.data.size}")
+        statusFlow.emit(CarStatusEvent.FrameSent(frame))
+        Log.i(TAG, "sendFrame(): FrameSent event emitted")
 
-        // Simulate RX event (same shape as DuoCAN CAN_RX)
-        scope.launch {
-            val ack = CarCanFrame(
-                id = 0xFFFF,
-                data = byteArrayOf(
-                    0xAC.toByte(), // mock ACK header
-                    0x01.toByte()  // mock ACK payload
-                )
+        // Simulated ACK frame
+        val ack = CarCanFrame(
+            id = 0xFFFF,
+            data = byteArrayOf(
+                0xAC.toByte(),
+                0x01.toByte()
             )
-            statusFlow.emit(CarStatusEvent.FrameReceived(ack))
-        }
+        )
+
+        Log.i(TAG, "sendFrame(): Emitting mock ACK id=0xFFFF payload=AC 01")
+        statusFlow.emit(CarStatusEvent.FrameReceived(ack))
+        Log.i(TAG, "sendFrame(): FrameReceived (ACK) event emitted")
     }
 
-    override fun status(): Flow<CarStatusEvent> = statusFlow
+    override fun status(): Flow<CarStatusEvent> {
+        Log.i(TAG, "status(): Returning mock status flow")
+        return statusFlow
+    }
+
+    override fun close() {
+        Log.i(TAG, "close(): Mock transport closed")
+    }
 }

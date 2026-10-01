@@ -27,17 +27,17 @@ class CarCommandDispatcher(
 
         // Step 1 — Convert natural language → canonical command
         val command = CarCommandMap.map(text)
-        Log.i(TAG, "Canonical automotive command: $command")
+        Log.i(TAG, "Mapped natural language to canonical command: $command")
 
         if (command == "UNKNOWN_AUTOMOTIVE_COMMAND") {
-            Log.e(TAG, "Unknown automotive command: \"$text\"")
+            Log.e(TAG, "Unknown automotive command: \"$text\" — dispatch aborted")
             return
         }
 
         // Step 2 — Lookup CAN frame
         val frame = CarCanMap.lookup(command)
         if (frame == null) {
-            Log.e(TAG, "No CAN mapping for: $command")
+            Log.e(TAG, "No CAN mapping found for canonical command: $command — dispatch aborted")
             return
         }
 
@@ -46,16 +46,18 @@ class CarCommandDispatcher(
 
         // Step 4 — Send CAN frame via transport abstraction
         scope.launch {
+            Log.i(TAG, "Dispatching CAN frame via transport: id=${frame.id}, bytes=${frame.data.size}")
             transport.sendFrame(
                 CarCanFrame(
                     id = frame.id,
                     data = frame.data
                 )
             )
+            Log.i(TAG, "Transport sendFrame() invoked for command: $command")
         }
 
         // Step 5 — Automotive feedback (log only)
-        Log.i(TAG, "Executing automotive command: $command")
+        Log.i(TAG, "Command execution requested: $command")
     }
 
     /**

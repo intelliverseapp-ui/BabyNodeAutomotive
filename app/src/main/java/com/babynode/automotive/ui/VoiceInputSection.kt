@@ -14,11 +14,14 @@ import com.babynode.automotive.CarCommandDetector
 import com.babynode.automotive.CarCommandDispatcher
 import com.babynode.automotive.CarStatusEvent
 
+private const val TAG = "VoiceInputSection"
+
 @Composable
 fun VoiceInputSection(
     dispatcher: CarCommandDispatcher,
     status: CarStatusEvent?
 ) {
+    Log.i(TAG, "Render VoiceInputSection(): latestEvent=$status")
 
     var recognizedText by remember { mutableStateOf("") }
     var localStatus by remember { mutableStateOf("Ready for voice command") }
@@ -28,22 +31,27 @@ fun VoiceInputSection(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
 
-        // ⭐ CRITICAL: confirm callback is firing
-        Log.i("VoiceInputSection", "VOICE CALLBACK FIRED")
+        Log.i(TAG, "VOICE CALLBACK FIRED")
 
         val data = result.data
         val matches = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
         val spoken = matches?.firstOrNull() ?: ""
+
+        Log.i(TAG, "Recognized speech: \"$spoken\"")
+
         recognizedText = spoken
 
         if (spoken.isNotEmpty()) {
             if (CarCommandDetector.isAutomotive(spoken)) {
+                Log.i(TAG, "Recognized automotive command → dispatching")
                 dispatcher.handle(spoken)
                 localStatus = "Executed: $spoken"
             } else {
+                Log.i(TAG, "Recognized NON-automotive speech → rejected")
                 localStatus = "Not an automotive command"
             }
         } else {
+            Log.i(TAG, "No speech detected")
             localStatus = "No speech detected"
         }
     }
@@ -60,6 +68,8 @@ fun VoiceInputSection(
         // ⭐ Speak Command Button
         Button(
             onClick = {
+                Log.i(TAG, "Speak Command button clicked")
+
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(
                         RecognizerIntent.EXTRA_LANGUAGE_MODEL,
@@ -67,6 +77,8 @@ fun VoiceInputSection(
                     )
                     putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak automotive command")
                 }
+
+                Log.i(TAG, "Launching voice recognition intent")
                 voiceLauncher.launch(intent)
             }
         ) {
@@ -76,6 +88,7 @@ fun VoiceInputSection(
         Spacer(modifier = Modifier.height(16.dp))
 
         // ⭐ Show recognized text
+        Log.i(TAG, "Rendering recognized text: \"$recognizedText\"")
         Text(
             text = "Heard: $recognizedText",
             style = MaterialTheme.typography.bodyLarge
@@ -84,22 +97,31 @@ fun VoiceInputSection(
         Spacer(modifier = Modifier.height(8.dp))
 
         // ⭐ Status output (local + transport status)
+        val statusText = buildString {
+            append(localStatus)
+            if (status != null) {
+                append("\nTransport: ")
+                append(
+                    when (status) {
+                        is CarStatusEvent.Connected ->
+                            "Connected (${status.transportName})"
+                        is CarStatusEvent.Disconnected ->
+                            "Disconnected (${status.transportName})"
+                        is CarStatusEvent.Error ->
+                            "Error: ${status.message}"
+                        is CarStatusEvent.FrameReceived ->
+                            "Frame received: ID=${status.frame.id}"
+                        is CarStatusEvent.FrameSent ->
+                            "Frame sent: ID=${status.frame.id}"
+                    }
+                )
+            }
+        }
+
+        Log.i(TAG, "Rendering status text: $statusText")
+
         Text(
-            text = buildString {
-                append(localStatus)
-                if (status != null) {
-                    append("\nTransport: ")
-                    append(
-                        when (status) {
-                            is CarStatusEvent.Connected -> "Connected (${status.transportName})"
-                            is CarStatusEvent.Disconnected -> "Disconnected (${status.transportName})"
-                            is CarStatusEvent.Error -> "Error: ${status.message}"
-                            is CarStatusEvent.FrameReceived -> "Frame received: ID=${status.frame.id}"
-                            is CarStatusEvent.FrameSent -> "Frame sent: ID=${status.frame.id}"
-                        }
-                    )
-                }
-            },
+            text = statusText,
             style = MaterialTheme.typography.bodyMedium
         )
     }

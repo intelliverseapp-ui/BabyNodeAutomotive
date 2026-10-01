@@ -10,8 +10,6 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
 
-        // ⭐ REQUIRED FOR USB-SERIAL LIBRARY
-        maven(url = "https://jitpack.io")
     }
 }
 
@@ -25,8 +23,6 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
 
-        // ⭐ REQUIRED FOR USB-SERIAL LIBRARY
-        maven(url = "https://jitpack.io")
     }
 }
 

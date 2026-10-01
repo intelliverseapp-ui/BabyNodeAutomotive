@@ -1,59 +1,22 @@
 package com.babynode.automotive.ui
 
+import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.babynode.automotive.CarStatusEvent
 
+private const val TAG = "CanDebugSection"
+
 @Composable
 fun CanDebugSection(
-    status: CarStatusEvent?
+    eventHistory: List<CarStatusEvent>
 ) {
-
-    // ⭐ Unified CAN + Transport log buffer
-    val log = remember { mutableStateListOf<String>() }
-
-    // ⭐ Update log whenever a new status event arrives
-    LaunchedEffect(status) {
-        when (status) {
-
-            is CarStatusEvent.Connected -> {
-                log.add("CONNECTED: ${status.transportName}")
-            }
-
-            is CarStatusEvent.Disconnected -> {
-                log.add("DISCONNECTED: ${status.transportName}")
-            }
-
-            is CarStatusEvent.Error -> {
-                val msg = status.message
-                log.add("ERROR: $msg")
-            }
-
-            is CarStatusEvent.FrameSent -> {
-                val frame = status.frame
-                val formatted = "TX ID=${frame.id}  DATA=${frame.data.joinToString(" ")}"
-                log.add(formatted)
-            }
-
-            is CarStatusEvent.FrameReceived -> {
-                val frame = status.frame
-                val formatted = "RX ID=${frame.id}  DATA=${frame.data.joinToString(" ")}"
-                log.add(formatted)
-            }
-
-            null -> {}
-        }
-
-        // ⭐ Keep log from growing forever
-        if (log.size > 200) {
-            log.removeFirst()
-        }
-    }
+    Log.i(TAG, "Render CanDebugSection(): eventHistorySize=${eventHistory.size}")
 
     Column(modifier = Modifier.fillMaxWidth()) {
 
@@ -72,7 +35,10 @@ fun CanDebugSection(
                 .verticalScroll(rememberScrollState())
                 .padding(8.dp)
         ) {
-            for (line in log) {
+            for (event in eventHistory) {
+                val line = event.toLogLine()
+                Log.i(TAG, "Render log line: $line")
+
                 Text(
                     text = line,
                     style = MaterialTheme.typography.bodyMedium
@@ -81,4 +47,14 @@ fun CanDebugSection(
             }
         }
     }
+}
+
+private fun CarStatusEvent.toLogLine(): String = when (this) {
+    is CarStatusEvent.Connected -> "CONNECTED: $transportName"
+    is CarStatusEvent.Disconnected -> "DISCONNECTED: $transportName"
+    is CarStatusEvent.Error -> "ERROR: $message"
+    is CarStatusEvent.FrameSent ->
+        "TX ID=${frame.id}  DATA=${frame.data.joinToString(" ")}"
+    is CarStatusEvent.FrameReceived ->
+        "RX ID=${frame.id}  DATA=${frame.data.joinToString(" ")}"
 }
