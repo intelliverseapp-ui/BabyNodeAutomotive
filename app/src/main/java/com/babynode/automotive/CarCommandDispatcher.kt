@@ -8,12 +8,13 @@ import kotlinx.coroutines.launch
  * CarCommandDispatcher
  *
  * ONE RESPONSIBILITY:
- * Take a canonical automotive command and execute it.
+ * Execute either:
+ *   - Raw TCP SEND commands
+ *   - Automotive natural-language commands
  *
  * Pipeline:
  *   Natural language → CarCommandMap → CAN frame → CarCanTransport
- *
- * Now includes unified automotive logging (CAN-only, USB removed).
+ *   Raw SEND → CarCanTransport
  */
 class CarCommandDispatcher(
     private val scope: CoroutineScope,
@@ -23,9 +24,61 @@ class CarCommandDispatcher(
     private val TAG = "CarCommandDispatcher"
 
     fun handle(text: String) {
+        Log.i(TAG, "DISPATCH ENTER: $text")
+
+        // ============================================================
+        // RAW SEND COMMAND PATH (ALWAYS TAKES PRIORITY)
+        // ============================================================
+        if (text.startsWith("SEND ", ignoreCase = true)) {
+            Log.i(TAG, "Raw SEND command detected → bypassing automotive parser")
+
+            val parts = text.trim().split(Regex("\\s+"))
+            if (parts.size < 4) {
+                Log.e(TAG, "SEND command malformed: $text")
+                return
+            }
+
+            try {
+                val id = parts[1].toInt()
+                val dlc = parts[2].toInt()
+
+                if (dlc < 0 || dlc > 64) {
+                    Log.e(TAG, "SEND command invalid DLC: $dlc")
+                    return
+                }
+
+                val bytes = parts.drop(3).map {
+                    val b = it.toInt()
+                    if (b !in 0..255) throw IllegalArgumentException("Byte out of range")
+                    b.toByte()
+                }.toByteArray()
+
+                if (bytes.size != dlc) {
+                    Log.e(TAG, "SEND command DLC mismatch: expected $dlc bytes, got ${bytes.size}")
+                    return
+                }
+
+                val frame = CarCanFrame(id = id, data = bytes)
+
+                scope.launch {
+                    Log.i(TAG, "Dispatching RAW SEND frame: id=$id dlc=$dlc")
+                    transport.sendFrame(frame)
+                }
+
+                Log.i(TAG, "RAW SEND command executed successfully")
+                return
+
+            } catch (e: Exception) {
+                Log.e(TAG, "SEND command parse error: ${e.message}")
+                return
+            }
+        }
+
+        // ============================================================
+        // AUTOMOTIVE NATURAL LANGUAGE PATH
+        // ============================================================
         Log.i(TAG, "AUTOMOTIVE ENTER: $text")
 
-        // Step 1 — Convert natural language → canonical command
         val command = CarCommandMap.map(text)
         Log.i(TAG, "Mapped natural language to canonical command: $command")
 
@@ -34,17 +87,14 @@ class CarCommandDispatcher(
             return
         }
 
-        // Step 2 — Lookup CAN frame
         val frame = CarCanMap.lookup(command)
         if (frame == null) {
             Log.e(TAG, "No CAN mapping found for canonical command: $command — dispatch aborted")
             return
         }
 
-        // Step 3 — Unified automotive logging
         logAutomotiveEvent(text, command, frame)
 
-        // Step 4 — Send CAN frame via transport abstraction
         scope.launch {
             Log.i(TAG, "Dispatching CAN frame via transport: id=${frame.id}, bytes=${frame.data.size}")
             transport.sendFrame(
@@ -56,18 +106,11 @@ class CarCommandDispatcher(
             Log.i(TAG, "Transport sendFrame() invoked for command: $command")
         }
 
-        // Step 5 — Automotive feedback (log only)
         Log.i(TAG, "Command execution requested: $command")
     }
 
     /**
      * Unified automotive logging
-     *
-     * Logs:
-     *  - Natural language
-     *  - Canonical command
-     *  - CAN frame ID
-     *  - CAN payload (bytes)
      */
     private fun logAutomotiveEvent(
         natural: String,

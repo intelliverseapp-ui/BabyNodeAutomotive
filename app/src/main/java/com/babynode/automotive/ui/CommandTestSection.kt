@@ -31,32 +31,25 @@ fun CommandTestSection(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // ⭐ Input field for manual automotive command
         TextField(
             value = commandText,
             onValueChange = {
                 commandText = it
                 Log.i(TAG, "User typed command: \"$commandText\"")
             },
-            label = { Text("Enter automotive command") },
+            label = { Text("Enter automotive or SEND command") },
             modifier = Modifier.fillMaxWidth()
         )
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // ⭐ Send Command Button
         Button(
             onClick = {
                 Log.i(TAG, "Send Command clicked: \"$commandText\"")
 
-                if (CarCommandDetector.isAutomotive(commandText)) {
-                    Log.i(TAG, "Command recognized as automotive → dispatching")
-                    dispatcher.handle(commandText)
-                    localStatus = "Executed: $commandText"
-                } else {
-                    Log.i(TAG, "Command NOT automotive → rejected")
-                    localStatus = "Not an automotive command"
-                }
+                // ⭐ ALWAYS dispatch — automotive OR raw SEND
+                dispatcher.handle(commandText)
+                localStatus = "Executed: $commandText"
             }
         ) {
             Text("Send Command")
@@ -64,7 +57,6 @@ fun CommandTestSection(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // ⭐ Status output (local + transport status)
         val statusText = buildString {
             append(localStatus)
             if (status != null) {

@@ -54,7 +54,7 @@ class CarCanBusTcp(
     private var receiveJob: Job? = null
 
     override suspend fun connect() {
-        Log.i(TAG, "connect(): Attempting TCP connection to $host:$port")
+        Log.i(TAG, "connect(): Attempting TCP connection to $host:$port with retries")
 
         withContext(Dispatchers.IO) {
             connectionMutex.withLock {
@@ -63,40 +63,65 @@ class CarCanBusTcp(
                     return@withLock
                 }
 
-                val newSocket = Socket()
-                try {
-                    Log.i(TAG, "connect(): Connecting with timeout=$CONNECT_TIMEOUT_MILLIS ms")
-                    newSocket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MILLIS)
+                var lastError: Exception? = null
 
-                    val newReader = BufferedReader(
-                        InputStreamReader(newSocket.getInputStream(), Charsets.UTF_8)
-                    )
-                    val newWriter = PrintWriter(
-                        newSocket.getOutputStream().bufferedWriter(Charsets.UTF_8),
-                        true
-                    )
+                for (attempt in 1..MAX_CONNECT_ATTEMPTS) {
+                    val newSocket = Socket()
+                    try {
+                        Log.i(
+                            TAG,
+                            "connect(): Attempt $attempt/$MAX_CONNECT_ATTEMPTS with timeout=$CONNECT_TIMEOUT_MILLIS ms"
+                        )
+                        newSocket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MILLIS)
 
-                    socket = newSocket
-                    writer = newWriter
+                        val newReader = BufferedReader(
+                            InputStreamReader(newSocket.getInputStream(), Charsets.UTF_8)
+                        )
+                        val newWriter = PrintWriter(
+                            newSocket.getOutputStream().bufferedWriter(Charsets.UTF_8),
+                            true
+                        )
 
-                    Log.i(TAG, "connect(): TCP connected successfully")
-                    statusFlow.emit(CarStatusEvent.Connected("TCP"))
+                        socket = newSocket
+                        writer = newWriter
 
-                    receiveJob = scope.launch(Dispatchers.IO) {
-                        Log.i(TAG, "connect(): Starting TCP readLoop()")
-                        readLoop(newSocket, newReader)
+                        Log.i(TAG, "connect(): TCP connected successfully")
+                        statusFlow.emit(CarStatusEvent.Connected("TCP"))
+
+                        receiveJob = scope.launch(Dispatchers.IO) {
+                            Log.i(TAG, "connect(): Starting TCP readLoop()")
+                            readLoop(newSocket, newReader)
+                        }
+
+                        return@withLock
+
+                    } catch (e: CancellationException) {
+                        Log.e(TAG, "connect(): Cancelled — closing socket")
+                        runCatching { newSocket.close() }
+                        throw e
+
+                    } catch (e: Exception) {
+                        lastError = e
+                        Log.e(
+                            TAG,
+                            "connect(): TCP connect failed on attempt $attempt: ${e.message}"
+                        )
+                        runCatching { newSocket.close() }
+
+                        if (attempt < MAX_CONNECT_ATTEMPTS) {
+                            Log.i(TAG, "connect(): Backing off before retry")
+                            Thread.sleep(CONNECT_RETRY_BACKOFF_MILLIS)
+                        }
                     }
-
-                } catch (e: CancellationException) {
-                    Log.e(TAG, "connect(): Cancelled — closing socket")
-                    runCatching { newSocket.close() }
-                    throw e
-
-                } catch (e: Exception) {
-                    Log.e(TAG, "connect(): TCP connect failed: ${e.message}")
-                    runCatching { newSocket.close() }
-                    statusFlow.emit(CarStatusEvent.Error("TCP connect failed: ${e.message}", e))
                 }
+
+                Log.e(TAG, "connect(): All TCP connect attempts failed")
+                statusFlow.emit(
+                    CarStatusEvent.Error(
+                        "TCP connect failed after $MAX_CONNECT_ATTEMPTS attempts: ${lastError?.message}",
+                        lastError
+                    )
+                )
             }
         }
     }
@@ -118,7 +143,12 @@ class CarCanBusTcp(
                     activeSocket?.close()
                 } catch (e: Exception) {
                     Log.e(TAG, "disconnect(): TCP disconnect failed: ${e.message}")
-                    statusFlow.emit(CarStatusEvent.Error("TCP disconnect failed: ${e.message}", e))
+                    statusFlow.emit(
+                        CarStatusEvent.Error(
+                            "TCP disconnect failed: ${e.message}",
+                            e
+                        )
+                    )
                 }
 
                 Log.i(TAG, "disconnect(): Emitting Disconnected(TCP)")
@@ -174,7 +204,12 @@ class CarCanBusTcp(
 
                 } catch (e: Exception) {
                     Log.e(TAG, "sendFrame(): TCP send failed: ${e.message}")
-                    statusFlow.emit(CarStatusEvent.Error("TCP send failed: ${e.message}", e))
+                    statusFlow.emit(
+                        CarStatusEvent.Error(
+                            "TCP send failed: ${e.message}",
+                            e
+                        )
+                    )
                     closeConnectionLocked()
                     statusFlow.emit(CarStatusEvent.Disconnected("TCP"))
                 }
@@ -200,7 +235,12 @@ class CarCanBusTcp(
         val closeFailure = runCatching { activeSocket?.close() }.exceptionOrNull()
         if (closeFailure != null) {
             Log.e(TAG, "close(): TCP close failed: ${closeFailure.message}")
-            statusFlow.tryEmit(CarStatusEvent.Error("TCP close failed: ${closeFailure.message}", closeFailure))
+            statusFlow.tryEmit(
+                CarStatusEvent.Error(
+                    "TCP close failed: ${closeFailure.message}",
+                    closeFailure
+                )
+            )
         }
 
         Log.i(TAG, "close(): Emitting Disconnected(TCP)")
@@ -223,12 +263,20 @@ class CarCanBusTcp(
 
                 try {
                     val frame = parseReceivedFrame(line)
-                    Log.i(TAG, "readLoop(): Parsed CAN_RX frame id=${frame.id}, bytes=${frame.data.size}")
+                    Log.i(
+                        TAG,
+                        "readLoop(): Parsed CAN_RX frame id=${frame.id}, bytes=${frame.data.size}"
+                    )
                     statusFlow.emit(CarStatusEvent.FrameReceived(frame))
 
                 } catch (e: IllegalArgumentException) {
                     Log.e(TAG, "readLoop(): Invalid TCP CAN frame: ${e.message}")
-                    statusFlow.emit(CarStatusEvent.Error("Invalid TCP CAN frame: ${e.message}", e))
+                    statusFlow.emit(
+                        CarStatusEvent.Error(
+                            "Invalid TCP CAN frame: ${e.message}",
+                            e
+                        )
+                    )
                 }
             }
 
@@ -250,7 +298,12 @@ class CarCanBusTcp(
 
                     if (failure != null) {
                         Log.e(TAG, "readLoop(): Emitting RX failure error")
-                        statusFlow.emit(CarStatusEvent.Error("TCP RX failed: ${failure.message}", failure))
+                        statusFlow.emit(
+                            CarStatusEvent.Error(
+                                "TCP RX failed: ${failure.message}",
+                                failure
+                            )
+                        )
                     }
 
                     Log.i(TAG, "readLoop(): Emitting Disconnected(TCP)")
@@ -302,6 +355,8 @@ class CarCanBusTcp(
 
     private companion object {
         const val CONNECT_TIMEOUT_MILLIS = 3_000
+        const val MAX_CONNECT_ATTEMPTS = 5
+        const val CONNECT_RETRY_BACKOFF_MILLIS = 1_000L
         val WHITESPACE = Regex("\\s+")
     }
 }
