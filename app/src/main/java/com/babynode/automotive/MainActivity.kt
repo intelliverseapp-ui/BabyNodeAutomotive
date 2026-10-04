@@ -25,6 +25,11 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
+enum class ModuleType(val uiLabel: String, val jsonId: String, val ip: String, val port: Int) {
+    SINGLE_CAN("Single-CAN Module (ESP32-S3 WROOM)", "single", "192.168.4.1", 1234),
+    DUAL_CAN("Dual-CAN Module (DuoCAN-C6)", "dual", "192.168.4.1", 1234)
+}
+
 class MainActivity : ComponentActivity() {
 
     private val TAG = "BNA_MainActivity"
@@ -34,7 +39,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var dispatcher: CarCommandDispatcher
     private val statusBus = CarStatusBus()
     private var transportEventsJob: Job? = null
-    private var selectedTransport = "Mock"
+
+    private var selectedModule: ModuleType = ModuleType.SINGLE_CAN
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,18 +49,20 @@ class MainActivity : ComponentActivity() {
 
         enableEdgeToEdge()
 
-        // Initialize default transport
-        val initialTransport = CarCanBusMock()
+        // INITIAL TRANSPORT
+        val initialTransport = CarCanBusTcp(
+            host = selectedModule.ip,
+            port = selectedModule.port,
+            scope = lifecycleScope
+        )
+
         transport = initialTransport
         dispatcher = CarCommandDispatcher(lifecycleScope, initialTransport)
         observeTransport(initialTransport)
 
-        Log.i(TAG, "onCreate(): Transport + dispatcher initialized (Mock)")
-
         lifecycleScope.launch {
             transportMutex.withLock {
-                Log.i(TAG, "onCreate(): Connecting initial Mock transport")
-                statusBus.markConnecting("Mock")
+                statusBus.markConnecting("TCP")
                 initialTransport.connect()
             }
         }
@@ -62,7 +70,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             BabyNodeAutomotiveTheme {
                 var currentDispatcher by remember { mutableStateOf(dispatcher) }
-                var currentSelection by remember { mutableStateOf(selectedTransport) }
+                var currentModule by remember { mutableStateOf(selectedModule) }
+
                 val connectionState by statusBus.connectionState.collectAsState()
                 val latestEvent by statusBus.latestEvent.collectAsState()
                 val eventHistory by statusBus.events.collectAsState()
@@ -72,18 +81,49 @@ class MainActivity : ComponentActivity() {
                 ) { innerPadding ->
                     AutomotiveScreen(
                         dispatcher = currentDispatcher,
-                        selectedTransport = currentSelection,
+                        moduleType = currentModule,
                         connectionState = connectionState,
                         status = latestEvent,
                         eventHistory = eventHistory,
                         modifier = Modifier.padding(innerPadding),
-                        onTransportSelected = { selected ->
-                            Log.i(TAG, "UI: Transport selected → $selected")
-                            if (selected != currentSelection) {
-                                currentSelection = selected
+                        onModuleSelected = { module ->
+                            Log.i(TAG, "UI: Module selected → ${module.uiLabel}")
+
+                            if (module != currentModule) {
+                                currentModule = module
+                                selectedModule = module
+
                                 lifecycleScope.launch {
-                                    Log.i(TAG, "UI: Switching transport to $selected")
-                                    currentDispatcher = selectTransport(selected)
+                                    transportMutex.withLock {
+
+                                        // CLOSE OLD TRANSPORT
+                                        Log.i(TAG, "UI: Closing old TCP transport")
+                                        transport.close()
+                                        transportEventsJob?.cancel()
+
+                                        // CREATE NEW TRANSPORT
+                                        Log.i(TAG, "UI: Creating new TCP transport for ${module.uiLabel}")
+                                        val newTransport = CarCanBusTcp(
+                                            host = module.ip,
+                                            port = module.port,
+                                            scope = lifecycleScope
+                                        )
+
+                                        transport = newTransport
+                                        dispatcher = CarCommandDispatcher(lifecycleScope, newTransport)
+                                        currentDispatcher = dispatcher
+
+                                        observeTransport(newTransport)
+
+                                        // CONNECT NEW TRANSPORT
+                                        Log.i(TAG, "UI: Connecting new TCP transport")
+                                        statusBus.markConnecting("TCP")
+                                        newTransport.connect()
+
+                                        // SEND MODULE CONFIG
+                                        Log.i(TAG, "UI: Sending module config → ${module.jsonId}")
+                                        dispatcher.sendModuleConfig(module.jsonId)
+                                    }
                                 }
                             }
                         }
@@ -94,86 +134,18 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        Log.i(TAG, "onDestroy(): Activity destroying — cleaning up transport")
         transportEventsJob?.cancel()
         if (::transport.isInitialized) {
-            Log.i(TAG, "onDestroy(): Closing transport")
             transport.close()
         }
         super.onDestroy()
     }
 
     private fun observeTransport(activeTransport: CarCanTransport) {
-        Log.i(TAG, "observeTransport(): Observing status events for ${activeTransport::class.simpleName}")
         transportEventsJob = lifecycleScope.launch(start = CoroutineStart.UNDISPATCHED) {
             activeTransport.status().collect { event ->
-                Log.i(TAG, "observeTransport(): Event received → $event")
                 statusBus.accept(event)
             }
         }
-    }
-
-    private suspend fun selectTransport(name: String): CarCommandDispatcher = transportMutex.withLock {
-        Log.i(TAG, "selectTransport(): Requested switch to $name")
-
-        if (name == selectedTransport) {
-            Log.i(TAG, "selectTransport(): Already using $name — no switch needed")
-            return dispatcher
-        }
-
-        val previousTransport = transport
-        Log.i(TAG, "selectTransport(): Disconnecting previous transport (${previousTransport::class.simpleName})")
-
-        try {
-            previousTransport.disconnect()
-        } catch (e: CancellationException) {
-            Log.e(TAG, "selectTransport(): Disconnect cancelled")
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "selectTransport(): Disconnect failed: ${e.message}")
-            statusBus.accept(CarStatusEvent.Error("Transport disconnect failed: ${e.message}", e))
-        }
-
-        transportEventsJob?.cancelAndJoin()
-        Log.i(TAG, "selectTransport(): Previous transport event job cancelled")
-
-        previousTransport.close()
-        Log.i(TAG, "selectTransport(): Previous transport closed")
-
-        val nextTransport = when (name) {
-            "TCP" -> {
-                Log.i(TAG, "selectTransport(): Creating TCP transport")
-                CarCanBusTcp(scope = lifecycleScope)
-            }
-            else -> {
-                Log.i(TAG, "selectTransport(): Creating Mock transport")
-                CarCanBusMock()
-            }
-        }
-
-        transport = nextTransport
-        selectedTransport = name
-        dispatcher = CarCommandDispatcher(lifecycleScope, nextTransport)
-
-        Log.i(TAG, "selectTransport(): Marking connection state → Connecting($name)")
-        statusBus.markConnecting(name)
-
-        Log.i(TAG, "selectTransport(): Observing new transport events")
-        observeTransport(nextTransport)
-
-        try {
-            Log.i(TAG, "selectTransport(): Connecting new transport ($name)")
-            nextTransport.connect()
-        } catch (e: CancellationException) {
-            Log.e(TAG, "selectTransport(): Connect cancelled — closing transport")
-            nextTransport.close()
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "selectTransport(): Connect failed: ${e.message}")
-            statusBus.accept(CarStatusEvent.Error("Transport connect failed: ${e.message}", e))
-        }
-
-        Log.i(TAG, "selectTransport(): Transport switched to $name")
-        dispatcher
     }
 }

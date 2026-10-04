@@ -13,22 +13,23 @@ import androidx.compose.ui.unit.dp
 import com.babynode.automotive.CarConnectionState
 import com.babynode.automotive.CarCommandDispatcher
 import com.babynode.automotive.CarStatusEvent
+import com.babynode.automotive.ModuleType
 
 private const val TAG = "AutomotiveScreen"
 
 @Composable
 fun AutomotiveScreen(
     dispatcher: CarCommandDispatcher,
-    selectedTransport: String,
+    moduleType: ModuleType,
     connectionState: CarConnectionState,
     status: CarStatusEvent?,
     eventHistory: List<CarStatusEvent>,
     modifier: Modifier = Modifier,
-    onTransportSelected: (String) -> Unit = {}
+    onModuleSelected: (ModuleType) -> Unit = {}
 ) {
-    Log.i(TAG, "Render AutomotiveScreen(): selectedTransport=$selectedTransport")
+    Log.i(TAG, "Render AutomotiveScreen(): moduleType=${moduleType.uiLabel}")
 
-    var expanded by remember { mutableStateOf(false) }
+    var moduleExpanded by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -38,16 +39,16 @@ fun AutomotiveScreen(
     ) {
 
         // -------------------------------
-        // Transport Header
+        // Module Selector Header
         // -------------------------------
         Text(
-            text = "Transport",
+            text = "Module Type",
             style = MaterialTheme.typography.titleLarge
         )
         Spacer(modifier = Modifier.height(8.dp))
 
         // -------------------------------
-        // Transport Selector
+        // Module Selector Dropdown
         // -------------------------------
         Box(
             modifier = Modifier.fillMaxWidth()
@@ -61,8 +62,8 @@ fun AutomotiveScreen(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) {
-                        Log.i(TAG, "Transport dropdown expanded")
-                        expanded = true
+                        Log.i(TAG, "Module dropdown expanded")
+                        moduleExpanded = true
                     }
                     .padding(0.dp)
             ) {
@@ -72,38 +73,38 @@ fun AutomotiveScreen(
                         .padding(16.dp)
                 ) {
                     Text(
-                        text = "Select Transport",
+                        text = "Select Module",
                         style = MaterialTheme.typography.labelMedium
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = selectedTransport,
+                        text = moduleType.uiLabel,
                         style = MaterialTheme.typography.bodyLarge
                     )
                 }
             }
 
             DropdownMenu(
-                expanded = expanded,
+                expanded = moduleExpanded,
                 onDismissRequest = {
-                    Log.i(TAG, "Transport dropdown dismissed")
-                    expanded = false
+                    Log.i(TAG, "Module dropdown dismissed")
+                    moduleExpanded = false
                 }
             ) {
                 DropdownMenuItem(
-                    text = { Text("Mock") },
+                    text = { Text(ModuleType.SINGLE_CAN.uiLabel) },
                     onClick = {
-                        Log.i(TAG, "Transport selected → Mock")
-                        expanded = false
-                        onTransportSelected("Mock")
+                        Log.i(TAG, "Module selected → ${ModuleType.SINGLE_CAN.uiLabel}")
+                        moduleExpanded = false
+                        onModuleSelected(ModuleType.SINGLE_CAN)
                     }
                 )
                 DropdownMenuItem(
-                    text = { Text("TCP") },
+                    text = { Text(ModuleType.DUAL_CAN.uiLabel) },
                     onClick = {
-                        Log.i(TAG, "Transport selected → TCP")
-                        expanded = false
-                        onTransportSelected("TCP")
+                        Log.i(TAG, "Module selected → ${ModuleType.DUAL_CAN.uiLabel}")
+                        moduleExpanded = false
+                        onModuleSelected(ModuleType.DUAL_CAN)
                     }
                 )
             }

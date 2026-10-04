@@ -4,9 +4,11 @@ import android.util.Log
 import kotlinx.coroutines.flow.Flow
 
 /**
- * Abstraction over any CAN transport (Mock, TCP).
+ * Abstraction over the CAN transport layer.
  *
- * USB has been removed from the architecture.
+ * Transport selection (Mock/TCP) has been removed.
+ * TCP is now always used, but this interface remains
+ * as the unified abstraction for the transport pipeline.
  */
 interface CarCanTransport {
 
@@ -16,33 +18,44 @@ interface CarCanTransport {
 
     /**
      * Connect to the underlying transport.
+     *
+     * Implementations (TCP) will override this.
      */
     suspend fun connect() {
-        Log.i(TAG, "connect(): Transport connect invoked")
+        Log.i(TAG, "connect(): Default transport connect invoked")
     }
 
     /**
      * Disconnect from the underlying transport.
      */
     suspend fun disconnect() {
-        Log.i(TAG, "disconnect(): Transport disconnect invoked")
+        Log.i(TAG, "disconnect(): Default transport disconnect invoked")
     }
 
     /**
      * Send a raw CAN frame.
+     *
+     * Dispatcher will call this for outgoing CAN traffic.
      */
     suspend fun sendFrame(frame: CarCanFrame) {
-        Log.i(TAG, "sendFrame(): Transport send invoked for frame id=${frame.id}, bytes=${frame.data.size}")
+        Log.i(
+            TAG,
+            "sendFrame(): Default transport send invoked for frame id=${frame.id}, bytes=${frame.data.size}"
+        )
     }
 
     /**
      * Observe status/events from the transport.
+     *
+     * TCP transport emits Connected, Disconnected, FrameReceived, etc.
      */
     fun status(): Flow<CarStatusEvent>
 
-    /** Release transport resources synchronously during owner teardown. */
+    /**
+     * Release transport resources synchronously during teardown.
+     */
     fun close() {
-        Log.i(TAG, "close(): Transport close invoked")
+        Log.i(TAG, "close(): Default transport close invoked")
     }
 }
 
@@ -56,7 +69,7 @@ data class CarCanFrame(
 }
 
 /**
- * Unified status events emitted by any transport.
+ * Unified status events emitted by the transport.
  */
 sealed class CarStatusEvent {
 

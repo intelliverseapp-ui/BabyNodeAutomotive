@@ -11,10 +11,12 @@ import kotlinx.coroutines.launch
  * Execute either:
  *   - Raw TCP SEND commands
  *   - Automotive natural-language commands
+ *   - Module configuration commands (NEW)
  *
  * Pipeline:
  *   Natural language → CarCommandMap → CAN frame → CarCanTransport
  *   Raw SEND → CarCanTransport
+ *   Module config → JSON → CarCanTransport (NEW)
  */
 class CarCommandDispatcher(
     private val scope: CoroutineScope,
@@ -22,6 +24,31 @@ class CarCommandDispatcher(
 ) {
 
     private val TAG = "CarCommandDispatcher"
+
+    // ============================================================
+    // NEW: Send module configuration JSON
+    // ============================================================
+    fun sendModuleConfig(moduleJsonId: String) {
+        val json = """{"type":"config","module":"$moduleJsonId"}"""
+        Log.i(TAG, "sendModuleConfig(): Dispatching module config → $json")
+
+        scope.launch {
+            try {
+                val bytes = json.toByteArray(Charsets.UTF_8)
+                val frame = CarCanFrame(
+                    id = 0xFFFF, // Special config frame ID (not a real CAN frame)
+                    data = bytes
+                )
+
+                Log.i(TAG, "sendModuleConfig(): Sending config frame id=0xFFFF bytes=${bytes.size}")
+                transport.sendFrame(frame)
+
+                Log.i(TAG, "sendModuleConfig(): Module config sent successfully")
+            } catch (e: Exception) {
+                Log.e(TAG, "sendModuleConfig(): Failed to send module config: ${e.message}")
+            }
+        }
+    }
 
     fun handle(text: String) {
         Log.i(TAG, "DISPATCH ENTER: $text")
