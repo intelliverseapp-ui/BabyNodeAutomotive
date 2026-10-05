@@ -16,6 +16,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.BabyNodeAutomotive">
 
+        <!-- ⭐ Google Assistant Shortcuts (modern supported method) -->
+        <meta-data
+            android:name="android.app.shortcuts"
+            android:resource="@xml/shortcuts" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

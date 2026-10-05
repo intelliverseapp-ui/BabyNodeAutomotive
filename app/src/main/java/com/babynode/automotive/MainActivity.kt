@@ -1,5 +1,6 @@
 package com.babynode.automotive
 
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -16,18 +17,16 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import com.babynode.automotive.ui.AutomotiveScreen
 import com.babynode.automotive.ui.theme.BabyNodeAutomotiveTheme
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 enum class ModuleType(val uiLabel: String, val jsonId: String, val ip: String, val port: Int) {
-    SINGLE_CAN("Single-CAN Module (ESP32-S3 WROOM)", "single", "192.168.4.1", 1234),
-    DUAL_CAN("Dual-CAN Module (DuoCAN-C6)", "dual", "192.168.4.1", 1234)
+    SINGLE_CAN("Single-CAN Module (ESP32-S3 WROOM)", "single", "10.84.212.50", 1234),
+    DUAL_CAN("Dual-CAN Module (DuoCAN-C6)", "dual", "10.84.212.50", 1234)
 }
 
 class MainActivity : ComponentActivity() {
@@ -128,6 +127,70 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     )
+                }
+            }
+        }
+    }
+
+    // ============================================================
+    // GEMINI / ASSISTANT INGESTION
+    // ============================================================
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+
+        Log.i(TAG, "onNewIntent(): Received intent → ${intent.action}")
+
+        // ⭐ Google Assistant deep‑link handling
+        intent.dataString?.let { data ->
+            Log.i(TAG, "Assistant deep link → $data")
+
+            when (data) {
+                "bn://unlock_doors" -> {
+                    Log.i(TAG, "Assistant: unlock_doors")
+                    dispatcher.handle("unlock the doors")
+                }
+                "bn://lock_doors" -> {
+                    Log.i(TAG, "Assistant: lock_doors")
+                    dispatcher.handle("lock the doors")
+                }
+            }
+        }
+
+        when (intent.action) {
+
+            Intent.ACTION_ASSIST -> {
+                Log.i(TAG, "ACTION_ASSIST received from Gemini")
+
+                val query = intent.getStringExtra(Intent.EXTRA_ASSIST_CONTEXT)
+                    ?: intent.getStringExtra(Intent.EXTRA_TEXT)
+                    ?: ""
+
+                if (query.isNotBlank()) {
+                    Log.i(TAG, "Gemini text → \"$query\"")
+
+                    if (CarCommandDetector.isAutomotive(query)) {
+                        Log.i(TAG, "Forwarding automotive command to dispatcher")
+                        dispatcher.handle(query)
+                    } else {
+                        Log.i(TAG, "Gemini text is NOT automotive → ignoring")
+                    }
+                }
+            }
+
+            Intent.ACTION_PROCESS_TEXT -> {
+                Log.i(TAG, "ACTION_PROCESS_TEXT received from Gemini")
+
+                val query = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString() ?: ""
+
+                if (query.isNotBlank()) {
+                    Log.i(TAG, "Gemini text → \"$query\"")
+
+                    if (CarCommandDetector.isAutomotive(query)) {
+                        Log.i(TAG, "Forwarding automotive command to dispatcher")
+                        dispatcher.handle(query)
+                    } else {
+                        Log.i(TAG, "Gemini text is NOT automotive → ignoring")
+                    }
                 }
             }
         }

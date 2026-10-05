@@ -1,3 +1,10 @@
 <resources>
-    <string name="app_name">BabyNodeAutomotive</string>
+    <string name="app_name">Baby Node</string>
+
+    <!-- Google Assistant Shortcut Labels -->
+    <string name="unlock_doors_short">Unlock doors</string>
+    <string name="unlock_doors_long">Unlock the car doors</string>
+
+    <string name="lock_doors_short">Lock doors</string>
+    <string name="lock_doors_long">Lock the car doors</string>
 </resources>

@@ -23,7 +23,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 
 class CarCanBusTcp(
-    private val host: String = "192.168.4.1",
+    private val host: String = "10.84.212.50",
     private val port: Int = 1234,
     private val scope: CoroutineScope
 ) : CarCanTransport {
@@ -43,7 +43,6 @@ class CarCanBusTcp(
     @Volatile
     private var receiveJob: Job? = null
 
-    // Exponential backoff state (Option C)
     @Volatile
     private var reconnectAttempt: Int = 0
 
@@ -236,7 +235,6 @@ class CarCanBusTcp(
                 }
             }
 
-            // Exponential backoff auto‑reconnect (Option C)
             scope.launch(Dispatchers.IO) {
                 reconnectAttempt += 1
                 val delayMs = computeBackoffDelay(reconnectAttempt)
@@ -261,7 +259,6 @@ class CarCanBusTcp(
     }
 
     private fun computeBackoffDelay(attempt: Int): Long {
-        // Option C: 0.5s → 1s → 2s → 3s → 5s → 8s → max 10s
         val sequence = listOf(500L, 1000L, 2000L, 3000L, 5000L, 8000L)
         return if (attempt <= sequence.size) {
             sequence[attempt - 1]
