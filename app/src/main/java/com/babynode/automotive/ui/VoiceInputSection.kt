@@ -1,5 +1,6 @@
 package com.babynode.automotive.ui
 
+import android.app.Activity
 import android.content.Intent
 import android.speech.RecognizerIntent
 import android.util.Log
@@ -12,32 +13,88 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.babynode.automotive.CarCommandDetector
 import com.babynode.automotive.CarCommandDispatcher
 import com.babynode.automotive.CarStatusEvent
 
-private const val TAG = "VoiceInputSection"
+private const val TAG =
+    "VoiceInputSection"
+
+private enum class VoiceRequestState {
+    READY,
+    LISTENING,
+    CANCELLED,
+    NO_SPEECH,
+    REJECTED,
+    SUBMITTED
+}
 
 @Composable
 fun VoiceInputSection(
     dispatcher: CarCommandDispatcher,
     status: CarStatusEvent?
 ) {
-
-    Log.i(
-        TAG,
-        "Render VoiceInputSection(): latestEvent=$status"
-    )
-
     var recognizedText by remember {
         mutableStateOf("")
     }
 
-    var localStatus by remember {
-        mutableStateOf("Ready for voice command")
+    var requestState by remember {
+        mutableStateOf(
+            VoiceRequestState.READY
+        )
+    }
+
+    var transportStatusForCurrentRequest by remember {
+        mutableStateOf<CarStatusEvent?>(
+            null
+        )
+    }
+
+    var waitingForFreshTransportEvent by remember {
+        mutableStateOf(
+            false
+        )
+    }
+
+    /*
+     * A transport event is associated with the current voice request
+     * only after that request has been submitted. This prevents an
+     * acknowledgment from an earlier request from appearing beneath
+     * a newly rejected or cancelled voice request.
+     */
+    LaunchedEffect(
+        status
+    ) {
+        if (
+            waitingForFreshTransportEvent &&
+            status != null
+        ) {
+            when (status) {
+                is CarStatusEvent.CommandSent,
+                is CarStatusEvent.CommandResponse,
+                is CarStatusEvent.Error,
+                is CarStatusEvent.Disconnected -> {
+                    transportStatusForCurrentRequest =
+                        status
+                }
+
+                is CarStatusEvent.Connected -> {
+                    /*
+                     * A connection event is not the result of the
+                     * submitted voice request, so it is not shown as
+                     * that request's transport outcome.
+                     */
+                }
+            }
+        }
     }
 
     val voiceLauncher =
@@ -46,97 +103,132 @@ fun VoiceInputSection(
                 ActivityResultContracts.StartActivityForResult()
         ) { result ->
 
-            Log.i(
-                TAG,
-                "VOICE CALLBACK FIRED"
-            )
-
-            val data = result.data
-
-            val matches =
-                data?.getStringArrayListExtra(
-                    RecognizerIntent.EXTRA_RESULTS
-                )
-
-            val spoken =
-                matches?.firstOrNull() ?: ""
-
-            Log.i(
-                TAG,
-                "Recognized speech: \"$spoken\""
-            )
-
-            recognizedText = spoken
-
-            if (spoken.isNotEmpty()) {
-
-                if (
-                    CarCommandDetector.isAutomotive(
-                        spoken
-                    )
-                ) {
-
-                    Log.i(
-                        TAG,
-                        "Recognized automotive command → dispatching"
-                    )
-
-                    dispatcher.handle(
-                        spoken
-                    )
-
-                    localStatus =
-                        "Executed: $spoken"
-
-                } else {
-
-                    Log.i(
-                        TAG,
-                        "Recognized NON-automotive speech → rejected"
-                    )
-
-                    localStatus =
-                        "Not an automotive command"
-                }
-
-            } else {
-
+            if (
+                result.resultCode !=
+                Activity.RESULT_OK
+            ) {
                 Log.i(
                     TAG,
-                    "No speech detected"
+                    "Voice recognition was cancelled or unsuccessful"
                 )
 
-                localStatus =
-                    "No speech detected"
+                requestState =
+                    VoiceRequestState.CANCELLED
+
+                waitingForFreshTransportEvent =
+                    false
+
+                transportStatusForCurrentRequest =
+                    null
+
+                return@rememberLauncherForActivityResult
             }
+
+            val matches =
+                result.data
+                    ?.getStringArrayListExtra(
+                        RecognizerIntent.EXTRA_RESULTS
+                    )
+
+            val spoken =
+                matches
+                    ?.firstOrNull()
+                    ?.trim()
+                    .orEmpty()
+
+            recognizedText =
+                spoken
+
+            transportStatusForCurrentRequest =
+                null
+
+            waitingForFreshTransportEvent =
+                false
+
+            if (spoken.isBlank()) {
+                Log.i(
+                    TAG,
+                    "Voice recognition returned no speech"
+                )
+
+                requestState =
+                    VoiceRequestState.NO_SPEECH
+
+                return@rememberLauncherForActivityResult
+            }
+
+            if (
+                !CarCommandDetector.isAutomotive(
+                    spoken
+                )
+            ) {
+                Log.i(
+                    TAG,
+                    "Voice request rejected by Phase 1 detector"
+                )
+
+                requestState =
+                    VoiceRequestState.REJECTED
+
+                return@rememberLauncherForActivityResult
+            }
+
+            Log.i(
+                TAG,
+                "Supported voice request submitted"
+            )
+
+            requestState =
+                VoiceRequestState.SUBMITTED
+
+            waitingForFreshTransportEvent =
+                true
+
+            dispatcher.handle(
+                spoken
+            )
         }
 
     Column(
-        modifier = Modifier.fillMaxWidth()
+        modifier =
+            Modifier.fillMaxWidth()
     ) {
-
         Text(
             text = "Voice Input",
-            style = MaterialTheme.typography.titleLarge
+            style =
+                MaterialTheme.typography.titleLarge
         )
 
         Spacer(
-            modifier = Modifier.height(8.dp)
+            modifier =
+                Modifier.height(
+                    8.dp
+                )
         )
 
         Button(
             onClick = {
-
                 Log.i(
                     TAG,
-                    "Speak Command button clicked"
+                    "Starting voice recognition"
                 )
 
-                val intent =
+                recognizedText =
+                    ""
+
+                requestState =
+                    VoiceRequestState.LISTENING
+
+                waitingForFreshTransportEvent =
+                    false
+
+                transportStatusForCurrentRequest =
+                    null
+
+                val recognitionIntent =
                     Intent(
                         RecognizerIntent.ACTION_RECOGNIZE_SPEECH
                     ).apply {
-
                         putExtra(
                             RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                             RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
@@ -144,73 +236,173 @@ fun VoiceInputSection(
 
                         putExtra(
                             RecognizerIntent.EXTRA_PROMPT,
-                            "Speak automotive command"
+                            "Speak an automotive command"
                         )
                     }
 
-                Log.i(
-                    TAG,
-                    "Launching voice recognition intent"
+                voiceLauncher.launch(
+                    recognitionIntent
                 )
-
-                voiceLauncher.launch(intent)
             }
         ) {
-
-            Text("Speak Command")
+            Text(
+                text = "Speak Command"
+            )
         }
 
         Spacer(
-            modifier = Modifier.height(16.dp)
+            modifier =
+                Modifier.height(
+                    16.dp
+                )
         )
 
         Text(
-            text = "Heard: $recognizedText",
-            style = MaterialTheme.typography.bodyLarge
+            text =
+                if (recognizedText.isBlank()) {
+                    "Heard: Nothing yet"
+                } else {
+                    "Heard: $recognizedText"
+                },
+            style =
+                MaterialTheme.typography.bodyLarge
         )
 
         Spacer(
-            modifier = Modifier.height(8.dp)
+            modifier =
+                Modifier.height(
+                    8.dp
+                )
         )
 
-        val statusText = buildString {
+        Text(
+            text =
+                voiceRequestStatusText(
+                    requestState
+                ),
+            style =
+                MaterialTheme.typography.bodyMedium
+        )
 
-            append(localStatus)
-
-            if (status != null) {
-
-                append("\nTransport: ")
-
-                append(
-                    when (status) {
-
-                        is CarStatusEvent.Connected ->
-                            "Connected (${status.transportName})"
-
-                        is CarStatusEvent.Disconnected ->
-                            "Disconnected (${status.transportName})"
-
-                        is CarStatusEvent.Error ->
-                            "Error: ${status.message}"
-
-                        is CarStatusEvent.CommandSent ->
-                            "Command sent: ${status.command.command}"
-
-                        is CarStatusEvent.CommandResponse ->
-                            "Response: ${status.status}"
-                    }
+        Spacer(
+            modifier =
+                Modifier.height(
+                    8.dp
                 )
+        )
+
+        Text(
+            text =
+                voiceTransportStatusText(
+                    requestState =
+                        requestState,
+                    transportStatus =
+                        transportStatusForCurrentRequest
+                ),
+            style =
+                MaterialTheme.typography.bodyMedium
+        )
+    }
+}
+
+private fun voiceRequestStatusText(
+    requestState: VoiceRequestState
+): String {
+    return when (requestState) {
+        VoiceRequestState.READY -> {
+            "Ready for voice command"
+        }
+
+        VoiceRequestState.LISTENING -> {
+            "Listening..."
+        }
+
+        VoiceRequestState.CANCELLED -> {
+            "Voice recognition cancelled"
+        }
+
+        VoiceRequestState.NO_SPEECH -> {
+            "No speech detected"
+        }
+
+        VoiceRequestState.REJECTED -> {
+            "Request rejected: not a supported Phase 1 command"
+        }
+
+        VoiceRequestState.SUBMITTED -> {
+            "Request submitted"
+        }
+    }
+}
+
+private fun voiceTransportStatusText(
+    requestState: VoiceRequestState,
+    transportStatus: CarStatusEvent?
+): String {
+    if (
+        requestState == VoiceRequestState.REJECTED
+    ) {
+        return "Transport: No command transmitted"
+    }
+
+    if (
+        requestState == VoiceRequestState.CANCELLED ||
+        requestState == VoiceRequestState.NO_SPEECH
+    ) {
+        return "Transport: No command submitted"
+    }
+
+    if (
+        requestState == VoiceRequestState.LISTENING
+    ) {
+        return "Transport: Waiting for voice request"
+    }
+
+    if (
+        requestState == VoiceRequestState.READY
+    ) {
+        return "Transport: No voice request submitted"
+    }
+
+    return when (transportStatus) {
+        null -> {
+            "Transport: Waiting for command status"
+        }
+
+        is CarStatusEvent.Connected -> {
+            "Transport: Connected to " +
+                transportStatus.transportName
+        }
+
+        is CarStatusEvent.Disconnected -> {
+            "Transport: Disconnected from " +
+                transportStatus.transportName
+        }
+
+        is CarStatusEvent.Error -> {
+            "Transport: Failed: " +
+                transportStatus.message
+        }
+
+        is CarStatusEvent.CommandSent -> {
+            "Transport: Request sent to BabyNodeCAN: " +
+                transportStatus.command.command
+        }
+
+        is CarStatusEvent.CommandResponse -> {
+            if (
+                transportStatus.status.equals(
+                    "ok",
+                    ignoreCase = true
+                )
+            ) {
+                "BabyNodeCAN: Request accepted " +
+                    "(id=${transportStatus.commandId})"
+            } else {
+                "BabyNodeCAN: Response " +
+                    transportStatus.status +
+                    " (id=${transportStatus.commandId})"
             }
         }
-
-        Log.i(
-            TAG,
-            "Rendering status text: $statusText"
-        )
-
-        Text(
-            text = statusText,
-            style = MaterialTheme.typography.bodyMedium
-        )
     }
 }

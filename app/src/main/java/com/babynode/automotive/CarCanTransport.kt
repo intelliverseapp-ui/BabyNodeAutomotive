@@ -1,156 +1,94 @@
 package com.babynode.automotive
 
-import android.util.Log
 import kotlinx.coroutines.flow.Flow
 
 /**
- * Canonical command sent from BabyNode Automotive
- * to BabyNodeCAN over Bluetooth.
+ * Canonical command sent from BabyNode Automotive to BabyNodeCAN.
+ *
+ * Android remains CAN-agnostic. Vehicle-specific CAN identifiers
+ * and payloads belong exclusively in BabyNodeCAN.
  */
 data class CanonicalCommand(
     val command: String,
     val value: String? = null
-) {
-    init {
-        Log.i(
-            "CanonicalCommand",
-            "Constructed command=$command value=$value"
-        )
-    }
-}
-
-/**
- * Bluetooth message envelope.
- */
-data class BluetoothMessage(
-    val id: Long,
-    val type: String,
-    val command: String,
-    val value: String? = null
-) {
-    init {
-        Log.i(
-            "BluetoothMessage",
-            "Created message id=$id type=$type command=$command"
-        )
-    }
-}
+)
 
 /**
  * Abstraction over the BabyNode Automotive transport layer.
  *
- * Android sends canonical commands.
- * BabyNodeCAN converts those commands into vehicle-specific CAN traffic.
+ * Implementations must explicitly provide every transport operation.
+ * No default no-op behavior is allowed.
  */
 interface CarCanTransport {
 
-    companion object {
-        private const val TAG = "CarCanTransport"
-    }
-
     /**
-     * Connect to the underlying transport.
+     * Connects to the underlying transport.
      */
-    suspend fun connect() {
-        Log.i(TAG, "connect(): Default transport connect invoked")
-    }
+    suspend fun connect()
 
     /**
-     * Disconnect from the underlying transport.
+     * Disconnects from the underlying transport.
+     *
+     * Unlike close(), disconnect() may leave an implementation
+     * available for an intentional future reconnection.
      */
-    suspend fun disconnect() {
-        Log.i(TAG, "disconnect(): Default transport disconnect invoked")
-    }
+    suspend fun disconnect()
 
     /**
-     * Send a canonical command.
+     * Sends one canonical command.
      */
-    suspend fun sendCommand(command: CanonicalCommand) {
-        Log.i(
-            TAG,
-            "sendCommand(): command=${command.command}, value=${command.value}"
-        )
-    }
+    suspend fun sendCommand(
+        command: CanonicalCommand
+    )
 
     /**
-     * Observe status/events from the transport.
+     * Exposes connection, request, response, and error events.
      */
     fun status(): Flow<CarStatusEvent>
 
     /**
-     * Release transport resources synchronously during teardown.
+     * Permanently releases transport resources.
+     *
+     * A transport must not be reused after close().
      */
-    fun close() {
-        Log.i(TAG, "close(): Default transport close invoked")
-    }
+    fun close()
 }
 
 /**
- * Unified status events emitted by the transport.
+ * Events emitted by a CarCanTransport implementation.
+ *
+ * These classes intentionally contain no Android framework calls,
+ * logging side effects, or transport behavior. They remain pure data
+ * objects that can be used in ordinary JVM unit tests.
  */
-sealed class CarStatusEvent {
-
-    init {
-        Log.i(
-            "CarStatusEvent",
-            "Event created: ${this::class.simpleName}"
-        )
-    }
+sealed interface CarStatusEvent {
 
     data class Connected(
         val transportName: String
-    ) : CarStatusEvent() {
-        init {
-            Log.i(
-                "CarStatusEvent",
-                "Connected($transportName)"
-            )
-        }
-    }
+    ) : CarStatusEvent
 
     data class Disconnected(
         val transportName: String
-    ) : CarStatusEvent() {
-        init {
-            Log.i(
-                "CarStatusEvent",
-                "Disconnected($transportName)"
-            )
-        }
-    }
+    ) : CarStatusEvent
 
     data class Error(
         val message: String,
         val throwable: Throwable? = null
-    ) : CarStatusEvent() {
-        init {
-            Log.e(
-                "CarStatusEvent",
-                "Error: $message throwable=${throwable?.message}"
-            )
-        }
-    }
+    ) : CarStatusEvent
 
     data class CommandSent(
         val command: CanonicalCommand
-    ) : CarStatusEvent() {
-        init {
-            Log.i(
-                "CarStatusEvent",
-                "CommandSent command=${command.command}"
-            )
-        }
-    }
+    ) : CarStatusEvent
 
+    /**
+     * Indicates that BabyNodeCAN returned a real, validated response.
+     *
+     * An "ok" response means BabyNodeCAN accepted the request. It does
+     * not by itself prove that the requested physical vehicle action
+     * completed.
+     */
     data class CommandResponse(
         val commandId: Long,
         val status: String
-    ) : CarStatusEvent() {
-        init {
-            Log.i(
-                "CarStatusEvent",
-                "CommandResponse id=$commandId status=$status"
-            )
-        }
-    }
+    ) : CarStatusEvent
 }

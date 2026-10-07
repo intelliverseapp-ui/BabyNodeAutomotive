@@ -22,8 +22,10 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.babynode.automotive.ui.AutomotiveScreen
 import com.babynode.automotive.ui.theme.BabyNodeAutomotiveTheme
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
@@ -45,21 +47,61 @@ enum class ModuleType(
 class MainActivity : ComponentActivity() {
 
     companion object {
-        private const val TAG = "BNA_MainActivity"
-        private const val TRANSPORT_NAME = "Bluetooth"
+        private const val TAG =
+            "BNA_MainActivity"
+
+        private const val TRANSPORT_NAME =
+            "Bluetooth"
+
+        private const val STATE_SELECTED_MODULE =
+            "selected_module"
+
+        private const val MAXIMUM_RECONNECT_ATTEMPTS =
+            5
+
+        private val RECONNECT_DELAYS_MILLIS =
+            longArrayOf(
+                1_000L,
+                2_000L,
+                4_000L,
+                8_000L,
+                10_000L
+            )
     }
 
-    private lateinit var transport: CarCanTransport
-    private lateinit var dispatcher: CarCommandDispatcher
+    private lateinit var transport:
+        CarCanTransport
 
-    private val statusBus = CarStatusBus()
+    private lateinit var dispatcher:
+        CarCommandDispatcher
 
-    private var transportEventsJob: Job? = null
+    private val statusBus =
+        CarStatusBus()
 
-    private var selectedModule: ModuleType =
+    private var transportEventsJob:
+        Job? = null
+
+    private var connectionJob:
+        Job? = null
+
+    private var reconnectJob:
+        Job? = null
+
+    private var selectedModule:
+        ModuleType =
         ModuleType.SINGLE_CAN
 
-    private var bluetoothStartupRequested = false
+    private var bluetoothStartupRequested =
+        false
+
+    private var activityIsDestroying =
+        false
+
+    private var intentionalTransportReplacement =
+        false
+
+    private var reconnectAttempt =
+        0
 
     private val bluetoothPermissionLauncher =
         registerForActivityResult(
@@ -85,8 +127,12 @@ class MainActivity : ComponentActivity() {
             Log.i(
                 TAG,
                 "Bluetooth permission result: " +
-                    "connect=$connectGranted, scan=$scanGranted"
+                    "connect=$connectGranted, " +
+                    "scan=$scanGranted"
             )
+
+            bluetoothStartupRequested =
+                false
 
             if (
                 connectGranted &&
@@ -104,10 +150,6 @@ class MainActivity : ComponentActivity() {
                     "Bluetooth permissions denied"
                 )
 
-                statusBus.markConnecting(
-                    TRANSPORT_NAME
-                )
-
                 statusBus.accept(
                     CarStatusEvent.Error(
                         "Nearby Devices permission is required " +
@@ -120,12 +162,19 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(
         savedInstanceState: Bundle?
     ) {
-        super.onCreate(savedInstanceState)
+        super.onCreate(
+            savedInstanceState
+        )
 
         Log.i(
             TAG,
             "onCreate(): Activity starting"
         )
+
+        selectedModule =
+            restoreSelectedModule(
+                savedInstanceState
+            )
 
         enableEdgeToEdge()
 
@@ -145,7 +194,7 @@ class MainActivity : ComponentActivity() {
             initialTransport
         )
 
-        handleIntent(
+        inspectExternalIntent(
             intent
         )
 
@@ -164,67 +213,63 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val connectionState by
-                    statusBus.connectionState.collectAsState()
+                    statusBus
+                        .connectionState
+                        .collectAsState()
 
                 val latestEvent by
-                    statusBus.latestEvent.collectAsState()
+                    statusBus
+                        .latestEvent
+                        .collectAsState()
 
                 val eventHistory by
-                    statusBus.events.collectAsState()
+                    statusBus
+                        .events
+                        .collectAsState()
 
                 Scaffold(
-                    modifier = Modifier
+                    modifier =
+                        Modifier
                 ) { innerPadding ->
 
                     AutomotiveScreen(
-                        dispatcher = currentDispatcher,
-                        moduleType = currentModule,
-                        connectionState = connectionState,
-                        status = latestEvent,
-                        eventHistory = eventHistory,
-                        modifier = Modifier.padding(
-                            innerPadding
-                        ),
+                        dispatcher =
+                            currentDispatcher,
+                        moduleType =
+                            currentModule,
+                        connectionState =
+                            connectionState,
+                        status =
+                            latestEvent,
+                        eventHistory =
+                            eventHistory,
+                        modifier =
+                            Modifier.padding(
+                                innerPadding
+                            ),
                         onModuleSelected = { module ->
 
                             Log.i(
                                 TAG,
-                                "UI: Module selected -> ${module.uiLabel}"
+                                "UI module selection changed"
                             )
 
-                            if (module != currentModule) {
-                                currentModule = module
-                                selectedModule = module
+                            if (
+                                module != currentModule
+                            ) {
+                                currentModule =
+                                    module
 
-                                lifecycleScope.launch {
-                                    transport.close()
+                                replaceTransport(
+                                    module =
+                                        module,
+                                    onDispatcherReplaced = {
+                                        replacementDispatcher ->
 
-                                    transportEventsJob?.cancel()
-
-                                    val newTransport =
-                                        CarCanBusBluetooth()
-
-                                    transport =
-                                        newTransport
-
-                                    dispatcher =
-                                        CarCommandDispatcher(
-                                            lifecycleScope,
-                                            newTransport
-                                        )
-
-                                    currentDispatcher =
-                                        dispatcher
-
-                                    observeTransport(
-                                        newTransport
-                                    )
-
-                                    bluetoothStartupRequested =
-                                        false
-
-                                    ensureBluetoothPermissionsAndConnect()
-                                }
+                                        currentDispatcher =
+                                            replacementDispatcher
+                                    }
+                                )
                             }
                         }
                     )
@@ -235,15 +280,111 @@ class MainActivity : ComponentActivity() {
         ensureBluetoothPermissionsAndConnect()
     }
 
+    override fun onSaveInstanceState(
+        outState: Bundle
+    ) {
+        outState.putString(
+            STATE_SELECTED_MODULE,
+            selectedModule.name
+        )
+
+        super.onSaveInstanceState(
+            outState
+        )
+    }
+
+    private fun restoreSelectedModule(
+        savedInstanceState: Bundle?
+    ): ModuleType {
+        val savedModuleName =
+            savedInstanceState
+                ?.getString(
+                    STATE_SELECTED_MODULE
+                )
+
+        return runCatching {
+            if (savedModuleName == null) {
+                ModuleType.SINGLE_CAN
+            } else {
+                ModuleType.valueOf(
+                    savedModuleName
+                )
+            }
+        }.getOrDefault(
+            ModuleType.SINGLE_CAN
+        )
+    }
+
+    private fun replaceTransport(
+        module: ModuleType,
+        onDispatcherReplaced:
+            (CarCommandDispatcher) -> Unit
+    ) {
+        intentionalTransportReplacement =
+            true
+
+        reconnectJob?.cancel()
+        reconnectJob =
+            null
+
+        reconnectAttempt =
+            0
+
+        connectionJob?.cancel()
+        connectionJob =
+            null
+
+        transportEventsJob?.cancel()
+        transportEventsJob =
+            null
+
+        transport.close()
+
+        val newTransport =
+            CarCanBusBluetooth()
+
+        transport =
+            newTransport
+
+        dispatcher =
+            CarCommandDispatcher(
+                lifecycleScope,
+                newTransport
+            )
+
+        selectedModule =
+            module
+
+        onDispatcherReplaced(
+            dispatcher
+        )
+
+        observeTransport(
+            newTransport
+        )
+
+        bluetoothStartupRequested =
+            false
+
+        intentionalTransportReplacement =
+            false
+
+        ensureBluetoothPermissionsAndConnect()
+    }
+
     private fun ensureBluetoothPermissionsAndConnect() {
+        if (activityIsDestroying) {
+            return
+        }
+
         if (
             Build.VERSION.SDK_INT <
             Build.VERSION_CODES.S
         ) {
             Log.i(
                 TAG,
-                "Android version does not require modern " +
-                    "Bluetooth runtime permissions"
+                "Modern Bluetooth runtime permissions " +
+                    "are not required on this Android version"
             )
 
             connectCurrentTransport()
@@ -263,7 +404,8 @@ class MainActivity : ComponentActivity() {
         Log.i(
             TAG,
             "Bluetooth permission check: " +
-                "connect=$connectGranted, scan=$scanGranted"
+                "connect=$connectGranted, " +
+                "scan=$scanGranted"
         )
 
         if (
@@ -283,7 +425,8 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        bluetoothStartupRequested = true
+        bluetoothStartupRequested =
+            true
 
         Log.i(
             TAG,
@@ -299,48 +442,219 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun connectCurrentTransport() {
-        bluetoothStartupRequested = false
+        if (activityIsDestroying) {
+            return
+        }
 
-        lifecycleScope.launch {
-            statusBus.markConnecting(
-                TRANSPORT_NAME
+        if (connectionJob?.isActive == true) {
+            Log.w(
+                TAG,
+                "Bluetooth connection attempt is already active"
             )
 
-            try {
-                Log.i(
-                    TAG,
-                    "Connecting Bluetooth transport"
+            return
+        }
+
+        bluetoothStartupRequested =
+            false
+
+        val activeTransport =
+            transport
+
+        connectionJob =
+            lifecycleScope.launch {
+                statusBus.markConnecting(
+                    TRANSPORT_NAME
                 )
 
-                transport.connect()
+                try {
+                    Log.i(
+                        TAG,
+                        "Connecting Bluetooth transport"
+                    )
 
-                Log.i(
-                    TAG,
-                    "Bluetooth transport connect() completed"
-                )
+                    activeTransport.connect()
 
-                dispatcher.sendModuleConfig(
-                    selectedModule.jsonId
-                )
-            } catch (e: Exception) {
-                Log.e(
-                    TAG,
-                    "Bluetooth startup failed",
-                    e
-                )
+                    Log.i(
+                        TAG,
+                        "Bluetooth transport connect() returned"
+                    )
+                } catch (e: CancellationException) {
+                    Log.i(
+                        TAG,
+                        "Bluetooth startup cancelled"
+                    )
 
-                statusBus.accept(
-                    CarStatusEvent.Error(
-                        "Bluetooth startup failed: " +
-                            (
-                                e.message
-                                    ?: e.javaClass.simpleName
-                            ),
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(
+                        TAG,
+                        "Bluetooth startup failed",
                         e
                     )
-                )
+
+                    statusBus.accept(
+                        CarStatusEvent.Error(
+                            "Bluetooth startup failed: " +
+                                (
+                                    e.message
+                                        ?: e.javaClass.simpleName
+                                ),
+                            e
+                        )
+                    )
+                } finally {
+                    connectionJob =
+                        null
+                }
+
+                if (
+                    !activityIsDestroying &&
+                    activeTransport === transport &&
+                    statusBus.connectionState.value
+                        !is CarConnectionState.Connected
+                ) {
+                    scheduleReconnect(
+                        reason =
+                            "Initial connection did not complete"
+                    )
+                }
             }
+    }
+
+    private fun scheduleReconnect(
+        reason: String
+    ) {
+        if (
+            activityIsDestroying ||
+            intentionalTransportReplacement
+        ) {
+            return
         }
+
+        if (reconnectJob?.isActive == true) {
+            Log.i(
+                TAG,
+                "Reconnect job is already active"
+            )
+
+            return
+        }
+
+        reconnectJob =
+            lifecycleScope.launch {
+                while (
+                    !activityIsDestroying &&
+                    !intentionalTransportReplacement &&
+                    reconnectAttempt <
+                    MAXIMUM_RECONNECT_ATTEMPTS
+                ) {
+                    val delayIndex =
+                        reconnectAttempt.coerceAtMost(
+                            RECONNECT_DELAYS_MILLIS.lastIndex
+                        )
+
+                    val reconnectDelay =
+                        RECONNECT_DELAYS_MILLIS[
+                            delayIndex
+                        ]
+
+                    reconnectAttempt +=
+                        1
+
+                    Log.w(
+                        TAG,
+                        "Scheduling Bluetooth reconnect " +
+                            "attempt=$reconnectAttempt, " +
+                            "delayMs=$reconnectDelay, " +
+                            "reason=$reason"
+                    )
+
+                    delay(
+                        reconnectDelay
+                    )
+
+                    if (
+                        activityIsDestroying ||
+                        intentionalTransportReplacement
+                    ) {
+                        return@launch
+                    }
+
+                    if (
+                        statusBus.connectionState.value
+                        is CarConnectionState.Connected
+                    ) {
+                        reconnectAttempt =
+                            0
+
+                        return@launch
+                    }
+
+                    val activeTransport =
+                        transport
+
+                    statusBus.markConnecting(
+                        TRANSPORT_NAME
+                    )
+
+                    try {
+                        Log.i(
+                            TAG,
+                            "Automatic Bluetooth reconnect attempt " +
+                                reconnectAttempt
+                        )
+
+                        activeTransport.connect()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(
+                            TAG,
+                            "Automatic Bluetooth reconnect failed",
+                            e
+                        )
+                    }
+
+                    /*
+                     * Allow the transport event collector to process
+                     * a possible Connected event before deciding
+                     * whether another attempt is required.
+                     */
+                    delay(
+                        500L
+                    )
+
+                    if (
+                        activeTransport === transport &&
+                        statusBus.connectionState.value
+                        is CarConnectionState.Connected
+                    ) {
+                        reconnectAttempt =
+                            0
+
+                        Log.i(
+                            TAG,
+                            "Automatic Bluetooth reconnection succeeded"
+                        )
+
+                        return@launch
+                    }
+                }
+
+                if (
+                    !activityIsDestroying &&
+                    statusBus.connectionState.value
+                    !is CarConnectionState.Connected
+                ) {
+                    statusBus.accept(
+                        CarStatusEvent.Error(
+                            "BabyNodeCAN reconnection failed after " +
+                                "$MAXIMUM_RECONNECT_ATTEMPTS attempts"
+                        )
+                    )
+                }
+            }
     }
 
     private fun hasPermission(
@@ -352,64 +666,49 @@ class MainActivity : ComponentActivity() {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun handleIntent(
-        intent: Intent?
+    /**
+     * External intents are inspected but never translated directly
+     * into vehicle commands.
+     *
+     * Vehicle commands must originate from the visible in-app voice
+     * or typed-command interface, where the user deliberately submits
+     * the request.
+     */
+    private fun inspectExternalIntent(
+        incomingIntent: Intent?
     ) {
-        if (intent == null) {
+        if (incomingIntent == null) {
             return
         }
 
-        intent.dataString?.let { data ->
-            when (data) {
-                "bn://unlock_doors" -> {
-                    dispatcher.handle(
-                        "unlock the doors"
-                    )
-                }
+        val data =
+            incomingIntent.dataString
 
-                "bn://lock_doors" -> {
-                    dispatcher.handle(
-                        "lock the doors"
-                    )
-                }
-            }
+        if (
+            data == "bn://unlock_doors" ||
+            data == "bn://lock_doors"
+        ) {
+            Log.w(
+                TAG,
+                "External vehicle-command deep link rejected"
+            )
+
+            return
         }
 
-        when (intent.action) {
+        when (incomingIntent.action) {
             Intent.ACTION_ASSIST -> {
-                val query =
-                    intent.getStringExtra(
-                        Intent.EXTRA_TEXT
-                    ) ?: ""
-
-                if (
-                    query.isNotBlank() &&
-                    CarCommandDetector.isAutomotive(
-                        query
-                    )
-                ) {
-                    dispatcher.handle(
-                        query
-                    )
-                }
+                Log.w(
+                    TAG,
+                    "External Assistant command execution rejected"
+                )
             }
 
             Intent.ACTION_PROCESS_TEXT -> {
-                val query =
-                    intent.getCharSequenceExtra(
-                        Intent.EXTRA_PROCESS_TEXT
-                    )?.toString() ?: ""
-
-                if (
-                    query.isNotBlank() &&
-                    CarCommandDetector.isAutomotive(
-                        query
-                    )
-                ) {
-                    dispatcher.handle(
-                        query
-                    )
-                }
+                Log.w(
+                    TAG,
+                    "External processed-text command execution rejected"
+                )
             }
         }
     }
@@ -421,13 +720,33 @@ class MainActivity : ComponentActivity() {
             intent
         )
 
-        handleIntent(
+        setIntent(
+            intent
+        )
+
+        inspectExternalIntent(
             intent
         )
     }
 
     override fun onDestroy() {
+        activityIsDestroying =
+            true
+
+        intentionalTransportReplacement =
+            true
+
+        reconnectJob?.cancel()
+        reconnectJob =
+            null
+
+        connectionJob?.cancel()
+        connectionJob =
+            null
+
         transportEventsJob?.cancel()
+        transportEventsJob =
+            null
 
         transport.close()
 
@@ -437,16 +756,72 @@ class MainActivity : ComponentActivity() {
     private fun observeTransport(
         activeTransport: CarCanTransport
     ) {
+        transportEventsJob?.cancel()
+
         transportEventsJob =
             lifecycleScope.launch(
-                start = CoroutineStart.UNDISPATCHED
+                start =
+                    CoroutineStart.UNDISPATCHED
             ) {
                 activeTransport
                     .status()
                     .collect { event ->
+
+                        if (
+                            activeTransport !== transport
+                        ) {
+                            return@collect
+                        }
+
                         statusBus.accept(
                             event
                         )
+
+                        when (event) {
+                            is CarStatusEvent.Connected -> {
+                                reconnectAttempt =
+                                    0
+
+                                Log.i(
+                                    TAG,
+                                    "Bluetooth connection established"
+                                )
+
+                                dispatcher.sendModuleConfig(
+                                    selectedModule.jsonId
+                                )
+                            }
+
+                            is CarStatusEvent.Disconnected -> {
+                                if (
+                                    !activityIsDestroying &&
+                                    !intentionalTransportReplacement
+                                ) {
+                                    scheduleReconnect(
+                                        reason =
+                                            "Unexpected RFCOMM disconnect"
+                                    )
+                                }
+                            }
+
+                            is CarStatusEvent.Error -> {
+                                /*
+                                 * Command-level errors do not always
+                                 * mean the socket was lost. Reconnect
+                                 * is started only after a real
+                                 * Disconnected event or an initial
+                                 * connection that did not complete.
+                                 */
+                            }
+
+                            is CarStatusEvent.CommandSent -> {
+                                // No connection-state action required.
+                            }
+
+                            is CarStatusEvent.CommandResponse -> {
+                                // No connection-state action required.
+                            }
+                        }
                     }
             }
     }

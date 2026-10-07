@@ -1,6 +1,7 @@
 package com.babynode.automotive
 
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -9,137 +10,233 @@ import kotlinx.coroutines.launch
  *
  * Pipeline:
  *
- * Natural Language
+ * Natural-language request
  *      ↓
  * CarCommandMap
  *      ↓
- * CanonicalCommand
+ * Approved canonical command
  *      ↓
  * CarCanTransport
  *      ↓
  * BabyNodeCAN
- *      ↓
- * Vehicle-Specific CAN
+ *
+ * Android sends canonical commands only.
+ * BabyNodeCAN owns vehicle-specific CAN mapping.
  */
 class CarCommandDispatcher(
     private val scope: CoroutineScope,
     private val transport: CarCanTransport
 ) {
 
-    private val TAG = "CarCommandDispatcher"
+    companion object {
+        private const val TAG =
+            "CarCommandDispatcher"
 
-    fun sendModuleConfig(moduleJsonId: String) {
+        private const val MODULE_CONFIG_COMMAND =
+            "config.module"
 
-        Log.i(
-            TAG,
-            "sendModuleConfig(): module=$moduleJsonId"
-        )
-
-        scope.launch {
-
-            transport.sendCommand(
-                CanonicalCommand(
-                    command = "config.module",
-                    value = moduleJsonId
-                )
+        private val CANONICAL_COMMAND_PATTERN =
+            Regex(
+                pattern =
+                    """^[A-Z][A-Z0-9_]{1,63}$"""
             )
-
-            Log.i(
-                TAG,
-                "Module configuration dispatched"
-            )
-        }
     }
 
-    fun handle(text: String) {
+    /**
+     * Sends the selected BabyNodeCAN module configuration.
+     *
+     * This is a protocol configuration command rather than a
+     * user-operated vehicle command.
+     */
+    fun sendModuleConfig(
+        moduleJsonId: String
+    ) {
+        val normalizedModuleId =
+            moduleJsonId
+                .trim()
+                .lowercase()
 
-        Log.i(TAG, "DISPATCH ENTER: $text")
-
-        val command = CarCommandMap.map(text)
-
-        Log.i(
-            TAG,
-            "Mapped natural language to canonical command: $command"
-        )
-
-        if (command == "UNKNOWN_AUTOMOTIVE_COMMAND") {
-
+        if (
+            normalizedModuleId != "single" &&
+            normalizedModuleId != "dual"
+        ) {
             Log.e(
                 TAG,
-                "Unknown automotive command: \"$text\""
+                "Invalid module configuration rejected"
             )
 
             return
         }
 
-        if (command == "IGNORED_NEGATED_COMMAND") {
+        scope.launch {
+            try {
+                transport.sendCommand(
+                    CanonicalCommand(
+                        command =
+                            MODULE_CONFIG_COMMAND,
+                        value =
+                            normalizedModuleId
+                    )
+                )
 
+                Log.i(
+                    TAG,
+                    "Module configuration request submitted"
+                )
+            } catch (e: CancellationException) {
+                Log.i(
+                    TAG,
+                    "Module configuration request cancelled"
+                )
+
+                throw e
+            } catch (e: Exception) {
+                Log.e(
+                    TAG,
+                    "Module configuration request failed",
+                    e
+                )
+            }
+        }
+    }
+
+    /**
+     * Maps natural-language input and submits it only when the
+     * resulting command is approved for Phase 1.
+     *
+     * This function does not claim that the vehicle physically
+     * executed the request. Transport and acknowledgment status
+     * are reported through CarStatusEvent.
+     */
+    fun handle(
+        text: String
+    ) {
+        val normalizedInput =
+            text.trim()
+
+        if (normalizedInput.isBlank()) {
             Log.w(
                 TAG,
-                "Negated automotive command ignored: \"$text\""
+                "Empty command request rejected"
             )
 
             return
         }
 
-        if (command == "PLACEHOLDER_FRAMES_DISABLED_FOR_LIVE_USE") {
+        val canonicalCommand =
+            CarCommandMap.map(
+                normalizedInput
+            )
 
-            Log.w(
+        when (canonicalCommand) {
+            CarCommandMap.UNKNOWN_COMMAND -> {
+                Log.w(
+                    TAG,
+                    "Unknown automotive request rejected"
+                )
+
+                return
+            }
+
+            CarCommandMap.IGNORED_NEGATED_COMMAND -> {
+                Log.w(
+                    TAG,
+                    "Negated automotive request rejected"
+                )
+
+                return
+            }
+
+            CarCommandMap.BLOCKED_OUT_OF_SCOPE_COMMAND -> {
+                Log.w(
+                    TAG,
+                    "Out-of-scope automotive request rejected"
+                )
+
+                return
+            }
+        }
+
+        if (
+            !isValidCanonicalCommand(
+                canonicalCommand
+            )
+        ) {
+            Log.e(
                 TAG,
-                "Placeholder command ignored"
+                "Canonical-command safety validation failed"
             )
 
             return
         }
 
-        logAutomotiveEvent(
-            natural = text,
-            command = command
+        Log.i(
+            TAG,
+            "Approved Phase 1 command submitted: " +
+                canonicalCommand
         )
 
         scope.launch {
-
-            transport.sendCommand(
-                CanonicalCommand(
-                    command = command
+            try {
+                transport.sendCommand(
+                    CanonicalCommand(
+                        command =
+                            canonicalCommand
+                    )
                 )
-            )
 
-            Log.i(
-                TAG,
-                "Transport sendCommand() invoked: $command"
-            )
+                Log.i(
+                    TAG,
+                    "Transport request completed for canonical command: " +
+                        canonicalCommand
+                )
+            } catch (e: CancellationException) {
+                Log.i(
+                    TAG,
+                    "Canonical command request cancelled"
+                )
+
+                throw e
+            } catch (e: Exception) {
+                Log.e(
+                    TAG,
+                    "Canonical command request failed",
+                    e
+                )
+            }
         }
-
-        Log.i(
-            TAG,
-            "Command dispatch requested: $command"
-        )
     }
 
-    private fun logAutomotiveEvent(
-        natural: String,
+    /**
+     * Defense-in-depth validation.
+     *
+     * CarCommandMap already enforces the Phase 1 allowlist.
+     * This check prevents sentinel values and malformed command
+     * names from reaching the Bluetooth transport.
+     */
+    private fun isValidCanonicalCommand(
         command: String
-    ) {
+    ): Boolean {
+        if (command.isBlank()) {
+            return false
+        }
 
-        Log.i(
-            TAG,
-            "================ AUTOMOTIVE COMMAND ================"
-        )
+        if (
+            command == CarCommandMap.UNKNOWN_COMMAND ||
+            command == CarCommandMap.IGNORED_NEGATED_COMMAND ||
+            command == CarCommandMap.BLOCKED_OUT_OF_SCOPE_COMMAND
+        ) {
+            return false
+        }
 
-        Log.i(
-            TAG,
-            "Natural language : $natural"
-        )
+        if (
+            command == MODULE_CONFIG_COMMAND
+        ) {
+            return false
+        }
 
-        Log.i(
-            TAG,
-            "Canonical command: $command"
-        )
-
-        Log.i(
-            TAG,
-            "===================================================="
+        return CANONICAL_COMMAND_PATTERN.matches(
+            command
         )
     }
 }

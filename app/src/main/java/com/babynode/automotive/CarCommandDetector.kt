@@ -5,172 +5,397 @@ import android.util.Log
 /**
  * CarCommandDetector
  *
- * ONE RESPONSIBILITY:
- * Safely determine whether a natural-language voice command
- * belongs to the Automotive subsystem.
+ * Determines whether natural-language input belongs to the
+ * supported BabyNode Automotive Phase 1 command system.
  *
- * Hardened against:
- * - negation ("don't unlock", "do not turn on headlights")
- * - substring false-positives ("unmute" containing "mute")
- * - ambiguous phrasing
+ * Responsibilities:
+ * - Normalize speech-recognition text
+ * - Detect supported automotive vocabulary
+ * - Reject negated requests
+ * - Reject commands outside the approved Phase 1 scope
  *
- * This detector ONLY determines automotive intent.
- * It does NOT map commands to CAN frames.
+ * This detector does not:
+ * - Generate canonical commands
+ * - Contain vehicle-specific CAN mappings
+ * - Transmit commands
  */
 object CarCommandDetector {
 
-    private const val TAG = "CarCommandDetector"
+    private const val TAG =
+        "CarCommandDetector"
 
     // ============================================================
-    // NEGATION / BLOCKERS (HIGH SAFETY)
+    // PHASE 1 AUTOMOTIVE VOCABULARY
     // ============================================================
-    private val negationTokens = listOf(
-        "don't", "do not", "stop", "cancel", "no", "not", "never"
-    )
 
-    private fun containsNegation(text: String): Boolean {
-        val t = text.lowercase()
-        return negationTokens.any { t.contains(it) }
-    }
-
-    // ============================================================
-    // WINDOWS
-    // ============================================================
     private val windowKeywords = listOf(
-        "window", "driver window", "passenger window",
-        "roll down", "roll up"
+        "window",
+        "windows",
+        "driver window",
+        "passenger window",
+        "roll down",
+        "roll up"
     )
 
-    // ============================================================
-    // LOCKS
-    // ============================================================
     private val lockKeywords = listOf(
-        "lock", "unlock", "door", "doors"
+        "lock",
+        "unlock",
+        "door",
+        "doors"
     )
 
-    // ============================================================
-    // CLIMATE / AC / HEAT
-    // ============================================================
     private val climateKeywords = listOf(
-        "ac", "air conditioning", "fan", "climate",
-        "heat", "cool", "temperature", "temp",
-        "defrost", "defog", "rear defogger", "front defogger",
-        "recirculate", "max ac", "max heat"
+        "ac",
+        "air conditioning",
+        "fan",
+        "climate",
+        "heat",
+        "heater",
+        "cool",
+        "temperature",
+        "temp",
+        "defrost",
+        "defroster",
+        "defog",
+        "defogger",
+        "rear defogger",
+        "front defroster",
+        "recirculate",
+        "max ac",
+        "max heat",
+        "sync temperature",
+        "dual climate"
     )
 
-    // ============================================================
-    // LIGHTING
-    // ============================================================
     private val lightingKeywords = listOf(
-        "headlights", "headlight", "lights",
-        "bright lights", "high beams", "high beam",
-        "fog lights", "fog light",
-        "interior lights", "interior light",
-        "dome light"
+        "headlight",
+        "headlights",
+        "light",
+        "lights",
+        "bright lights",
+        "high beam",
+        "high beams",
+        "fog light",
+        "fog lights",
+        "interior light",
+        "interior lights",
+        "dome light",
+        "dome lights",
+        "auto headlights",
+        "automatic headlights"
     )
 
-    // ============================================================
-    // BODY (TRUNK / HOOD / GAS CAP)
-    // ============================================================
     private val bodyKeywords = listOf(
-        "trunk", "hood", "gas cap", "fuel door"
+        "trunk",
+        "hood",
+        "gas cap",
+        "fuel door"
     )
 
-    // ============================================================
-    // ROOF (SUNROOF / MOONROOF)
-    // ============================================================
     private val roofKeywords = listOf(
-        "sunroof", "moonroof", "roof"
+        "sunroof",
+        "moonroof"
     )
 
-    // ============================================================
-    // WIPERS / WASHER
-    // ============================================================
     private val wiperKeywords = listOf(
-        "wipers", "wiper", "windshield", "washer", "spray"
+        "wiper",
+        "wipers",
+        "windshield wiper",
+        "windshield wipers",
+        "washer",
+        "windshield washer",
+        "spray"
     )
 
-    // ============================================================
-    // MIRRORS
-    // ============================================================
     private val mirrorKeywords = listOf(
-        "mirror", "side mirror", "fold mirror", "unfold mirror"
+        "mirror",
+        "mirrors",
+        "side mirror",
+        "side mirrors",
+        "fold mirror",
+        "fold mirrors",
+        "unfold mirror",
+        "unfold mirrors"
     )
 
-    // ============================================================
-    // SEATS
-    // ============================================================
     private val seatKeywords = listOf(
-        "seat heater", "heated seat", "cooling seat",
+        "seat heater",
+        "seat heaters",
+        "heated seat",
+        "heated seats",
         "seat heat"
     )
 
-    // ============================================================
-    // AUDIO / INFOTAINMENT
-    // ============================================================
-    private val audioKeywords = listOf(
-        "mute", "unmute",
-        "volume", "volume up", "volume down",
-        "increase volume", "decrease volume",
-        "raise volume", "lower volume",
-        "audio", "sound"
+    private val parkingKeywords = listOf(
+        "parking sensor",
+        "parking sensors"
     )
 
-    // ============================================================
-    // Combined automotive vocabulary
-    // ============================================================
+    private val cameraKeywords = listOf(
+        "lanewatch",
+        "lane watch"
+    )
+
+    private val dashKeywords = listOf(
+        "dash brightness",
+        "dashboard brightness",
+        "brighten dash",
+        "dim dash",
+        "dimmer dash"
+    )
+
+    private val audioKeywords = listOf(
+        "mute",
+        "unmute",
+        "volume",
+        "volume up",
+        "volume down",
+        "increase volume",
+        "decrease volume",
+        "raise volume",
+        "lower volume",
+        "audio",
+        "sound",
+        "bluetooth audio",
+        "fm radio",
+        "am radio",
+        "xm radio",
+        "satellite radio",
+        "usb audio",
+        "navigation voice"
+    )
+
     private val automotiveVocabulary =
         windowKeywords +
-        lockKeywords +
-        climateKeywords +
-        lightingKeywords +
-        bodyKeywords +
-        roofKeywords +
-        wiperKeywords +
-        mirrorKeywords +
-        seatKeywords +
-        audioKeywords
+            lockKeywords +
+            climateKeywords +
+            lightingKeywords +
+            bodyKeywords +
+            roofKeywords +
+            wiperKeywords +
+            mirrorKeywords +
+            seatKeywords +
+            parkingKeywords +
+            cameraKeywords +
+            dashKeywords +
+            audioKeywords
 
     // ============================================================
-    // Token-based matching (safe)
+    // NORMALIZATION
     // ============================================================
-    private fun tokenize(text: String): List<String> {
-        return text.lowercase()
-            .replace("[^a-z0-9 ]".toRegex(), " ")
+
+    private fun normalizeText(
+        text: String
+    ): String {
+        return text
+            .lowercase()
+            .replace(
+                '’',
+                '\''
+            )
+            .replace(
+                Regex("""\bdon'?t\b"""),
+                "do not"
+            )
+            .replace(
+                Regex("""\bcannot\b"""),
+                "can not"
+            )
+            .replace(
+                Regex("""[^a-z0-9]+"""),
+                " "
+            )
+            .trim()
+            .replace(
+                Regex("""\s+"""),
+                " "
+            )
+    }
+
+    private fun tokenize(
+        normalizedText: String
+    ): List<String> {
+        if (normalizedText.isBlank()) {
+            return emptyList()
+        }
+
+        return normalizedText
             .split(" ")
-            .filter { it.isNotBlank() }
+            .filter {
+                it.isNotBlank()
+            }
     }
 
     // ============================================================
-    // Detection (safe automotive intent)
+    // NEGATION DETECTION
     // ============================================================
-    fun isAutomotive(text: String): Boolean {
-        val lower = text.lowercase()
 
-        // ------------------------------------------------------------
-        // SAFETY: Negation blocks automotive intent
-        // ------------------------------------------------------------
-        if (containsNegation(lower)) {
-            Log.w(TAG, "Negated automotive command ignored: \"$text\"")
+    private fun containsNegation(
+        normalizedText: String,
+        tokens: Set<String>
+    ): Boolean {
+        if ("do not" in normalizedText) {
+            return true
+        }
+
+        if ("can not" in normalizedText) {
+            return true
+        }
+
+        return tokens.any {
+            it == "no" ||
+                it == "not" ||
+                it == "never" ||
+                it == "stop"
+        }
+    }
+
+    // ============================================================
+    // PHASE 1 SCOPE ENFORCEMENT
+    // ============================================================
+
+    private fun containsOutOfScopeCommand(
+        tokens: Set<String>
+    ): Boolean {
+        if ("traction" in tokens) {
+            return true
+        }
+
+        if (
+            "eco" in tokens &&
+            "mode" in tokens
+        ) {
+            return true
+        }
+
+        if ("cruise" in tokens) {
+            return true
+        }
+
+        return tokens.any {
+            it == "brake" ||
+                it == "brakes" ||
+                it == "steering" ||
+                it == "airbag" ||
+                it == "airbags" ||
+                it == "torque" ||
+                it == "transmission"
+        }
+    }
+
+    // ============================================================
+    // PHRASE MATCHING
+    // ============================================================
+
+    private fun containsPhrase(
+        inputTokens: List<String>,
+        keyword: String
+    ): Boolean {
+        val keywordTokens =
+            tokenize(
+                normalizeText(
+                    keyword
+                )
+            )
+
+        if (
+            keywordTokens.isEmpty() ||
+            keywordTokens.size > inputTokens.size
+        ) {
             return false
         }
 
-        val tokens = tokenize(lower)
-
-        // ------------------------------------------------------------
-        // PRIORITY: Match whole tokens, not substrings
-        // ------------------------------------------------------------
-        val match = automotiveVocabulary.any { keyword ->
-            val keywordTokens = tokenize(keyword)
-            keywordTokens.all { it in tokens }
+        if (keywordTokens.size == 1) {
+            return keywordTokens.first() in inputTokens
         }
 
-        if (match) {
-            Log.d(TAG, "Automotive match detected for: \"$text\"")
+        return inputTokens
+            .windowed(
+                size = keywordTokens.size,
+                step = 1,
+                partialWindows = false
+            )
+            .any { tokenWindow ->
+                tokenWindow == keywordTokens
+            }
+    }
+
+    // ============================================================
+    // PUBLIC DETECTION ENTRY POINT
+    // ============================================================
+
+    fun isAutomotive(
+        text: String
+    ): Boolean {
+        val normalizedText =
+            normalizeText(
+                text
+            )
+
+        if (normalizedText.isBlank()) {
+            Log.d(
+                TAG,
+                "Automotive input was empty"
+            )
+
+            return false
+        }
+
+        val inputTokens =
+            tokenize(
+                normalizedText
+            )
+
+        val tokenSet =
+            inputTokens.toSet()
+
+        if (
+            containsNegation(
+                normalizedText,
+                tokenSet
+            )
+        ) {
+            Log.w(
+                TAG,
+                "Negated automotive request rejected"
+            )
+
+            return false
+        }
+
+        if (
+            containsOutOfScopeCommand(
+                tokenSet
+            )
+        ) {
+            Log.w(
+                TAG,
+                "Out-of-scope automotive request rejected"
+            )
+
+            return false
+        }
+
+        val matched =
+            automotiveVocabulary.any { keyword ->
+                containsPhrase(
+                    inputTokens,
+                    keyword
+                )
+            }
+
+        if (matched) {
+            Log.d(
+                TAG,
+                "Supported Phase 1 automotive intent detected"
+            )
         } else {
-            Log.d(TAG, "NO automotive match for: \"$text\"")
+            Log.d(
+                TAG,
+                "No supported Phase 1 automotive intent detected"
+            )
         }
 
-        return match
+        return matched
     }
 }
