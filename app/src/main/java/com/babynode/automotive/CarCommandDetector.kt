@@ -6,14 +6,32 @@ import android.util.Log
  * CarCommandDetector
  *
  * ONE RESPONSIBILITY:
- * Determine whether a natural-language voice command
+ * Safely determine whether a natural-language voice command
  * belongs to the Automotive subsystem.
  *
- * Scalable keyword-table architecture.
+ * Hardened against:
+ * - negation ("don't unlock", "do not turn on headlights")
+ * - substring false-positives ("unmute" containing "mute")
+ * - ambiguous phrasing
+ *
+ * This detector ONLY determines automotive intent.
+ * It does NOT map commands to CAN frames.
  */
 object CarCommandDetector {
 
     private const val TAG = "CarCommandDetector"
+
+    // ============================================================
+    // NEGATION / BLOCKERS (HIGH SAFETY)
+    // ============================================================
+    private val negationTokens = listOf(
+        "don't", "do not", "stop", "cancel", "no", "not", "never"
+    )
+
+    private fun containsNegation(text: String): Boolean {
+        val t = text.lowercase()
+        return negationTokens.any { t.contains(it) }
+    }
 
     // ============================================================
     // WINDOWS
@@ -114,13 +132,37 @@ object CarCommandDetector {
         audioKeywords
 
     // ============================================================
-    // Detection (pure automotive)
+    // Token-based matching (safe)
+    // ============================================================
+    private fun tokenize(text: String): List<String> {
+        return text.lowercase()
+            .replace("[^a-z0-9 ]".toRegex(), " ")
+            .split(" ")
+            .filter { it.isNotBlank() }
+    }
+
+    // ============================================================
+    // Detection (safe automotive intent)
     // ============================================================
     fun isAutomotive(text: String): Boolean {
-        val t = text.lowercase()
+        val lower = text.lowercase()
 
+        // ------------------------------------------------------------
+        // SAFETY: Negation blocks automotive intent
+        // ------------------------------------------------------------
+        if (containsNegation(lower)) {
+            Log.w(TAG, "Negated automotive command ignored: \"$text\"")
+            return false
+        }
+
+        val tokens = tokenize(lower)
+
+        // ------------------------------------------------------------
+        // PRIORITY: Match whole tokens, not substrings
+        // ------------------------------------------------------------
         val match = automotiveVocabulary.any { keyword ->
-            t.contains(keyword)
+            val keywordTokens = tokenize(keyword)
+            keywordTokens.all { it in tokens }
         }
 
         if (match) {

@@ -2,11 +2,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Required for Android voice recognition -->
+    <!-- Voice Recognition -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Legacy Bluetooth (Android 11 and below) -->
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+
+    <!-- Modern Bluetooth (Android 12+) -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+
+    <!-- Optional: allows scanning without location requirements -->
+    <!-- Existing network permission kept for compatibility during transition -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
+        android:name=".BabyNodeApp"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -16,7 +28,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.BabyNodeAutomotive">
 
-        <!-- ⭐ Google Assistant Shortcuts (modern supported method) -->
+        <!-- Google Assistant Shortcuts -->
         <meta-data
             android:name="android.app.shortcuts"
             android:resource="@xml/shortcuts" />

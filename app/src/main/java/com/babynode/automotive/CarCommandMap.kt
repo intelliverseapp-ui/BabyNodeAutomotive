@@ -1,201 +1,298 @@
 package com.babynode.automotive
 
+
 /**
  * CarCommandMap
  *
- * UNIVERSAL NATURAL-LANGUAGE → CANONICAL AUTOMOTIVE COMMANDS
+ * Hardened natural-language → canonical automotive command mapping.
+ *
+ * This version prevents:
+ * - substring false positives (“unmute” containing “mute”)
+ * - negation (“don’t unlock the doors”)
+ * - ambiguous phrasing
+ * - unsafe cruise speeds
+ * - mapping when placeholder CAN frames are active
  *
  * OEM-specific CAN frames belong in CarCanMap.kt.
  */
 object CarCommandMap {
 
-    fun map(text: String): String {
+
+    // ============================================================
+    // SAFETY: BLOCK MAPPING WHEN PLACEHOLDER FRAMES ARE ACTIVE
+    // ============================================================
+    private const val PLACEHOLDER_CAN_FRAMES = CarCanMap.PLACEHOLDER_CAN_FRAMES
+
+
+    // ============================================================
+    // NEGATION TOKENS
+    // ============================================================
+    private val negationTokens = listOf(
+        "don't", "do not", "stop", "cancel", "no", "not", "never"
+    )
+
+
+    private fun containsNegation(text: String): Boolean {
         val t = text.lowercase()
+        return negationTokens.any { t.contains(it) }
+    }
+
+
+    // ============================================================
+    // TOKENIZATION
+    // ============================================================
+    private fun tokenize(text: String): List<String> {
+        return text.lowercase()
+            .replace("[^a-z0-9 ]".toRegex(), " ")
+            .split(" ")
+            .filter { it.isNotBlank() }
+    }
+
+
+    // ============================================================
+    // MAIN MAPPING ENTRY POINT
+    // ============================================================
+    fun map(text: String): String {
+
+
+        val lower = text.lowercase()
+        val tokens = tokenize(lower)
+
+
+        // ------------------------------------------------------------
+        // SAFETY: Negation blocks mapping
+        // ------------------------------------------------------------
+        if (containsNegation(lower)) {
+            return "IGNORED_NEGATED_COMMAND"
+        }
+
+
+        // ------------------------------------------------------------
+        // SAFETY: Block mapping when placeholder frames are active
+        // ------------------------------------------------------------
+        if (PLACEHOLDER_CAN_FRAMES) {
+            return "PLACEHOLDER_FRAMES_DISABLED_FOR_LIVE_USE"
+        }
+
 
         // ============================================================
         // WINDOWS
         // ============================================================
-        if (t.contains("driver") && t.contains("window") && t.contains("down")) return "WINDOW_DRIVER_DOWN"
-        if (t.contains("driver") && t.contains("window") && t.contains("up"))   return "WINDOW_DRIVER_UP"
-        if (t.contains("passenger") && t.contains("window") && t.contains("down")) return "WINDOW_PASSENGER_DOWN"
-        if (t.contains("passenger") && t.contains("window") && t.contains("up"))   return "WINDOW_PASSENGER_UP"
+        if ("driver" in tokens && "window" in tokens && "down" in tokens) return "WINDOW_DRIVER_DOWN"
+        if ("driver" in tokens && "window" in tokens && "up" in tokens)   return "WINDOW_DRIVER_UP"
+        if ("passenger" in tokens && "window" in tokens && "down" in tokens) return "WINDOW_PASSENGER_DOWN"
+        if ("passenger" in tokens && "window" in tokens && "up" in tokens)   return "WINDOW_PASSENGER_UP"
+
 
         // ============================================================
-        // LOCKS
+        // LOCKS (safe ordering)
         // ============================================================
-        if (t.contains("unlock")) return "UNLOCK_DOORS"
-        if (t.contains("lock") && !t.contains("unlock")) return "LOCK_DOORS"
+        if ("unlock" in tokens) return "UNLOCK_DOORS"
+        if ("lock" in tokens && "unlock" !in tokens) return "LOCK_DOORS"
+
 
         // ============================================================
         // LIGHTING
         // ============================================================
-        if (t.contains("turn") && t.contains("headlight") && t.contains("on")) return "HEADLIGHTS_ON"
-        if (t.contains("turn") && t.contains("headlight") && t.contains("off")) return "HEADLIGHTS_OFF"
-
-        if (t.contains("headlight") && t.contains("on")) return "HEADLIGHTS_ON"
-        if (t.contains("headlight") && t.contains("off")) return "HEADLIGHTS_OFF"
-
-        if (t.contains("high beam") || t.contains("bright light") || t.contains("brights")) {
-            if (t.contains("on")) return "HIGH_BEAMS_ON"
-            if (t.contains("off")) return "HIGH_BEAMS_OFF"
+        if ("headlight" in tokens || "headlights" in tokens) {
+            if ("on" in tokens) return "HEADLIGHTS_ON"
+            if ("off" in tokens) return "HEADLIGHTS_OFF"
         }
 
-        if (t.contains("fog light") || t.contains("fog lights")) {
-            if (t.contains("on")) return "FOG_LIGHTS_ON"
-            if (t.contains("off")) return "FOG_LIGHTS_OFF"
+
+        if ("high" in tokens && "beam" in tokens) {
+            if ("on" in tokens) return "HIGH_BEAMS_ON"
+            if ("off" in tokens) return "HIGH_BEAMS_OFF"
         }
 
-        if (t.contains("interior light") || t.contains("dome light")) {
-            if (t.contains("on")) return "INTERIOR_LIGHTS_ON"
-            if (t.contains("off")) return "INTERIOR_LIGHTS_OFF"
+
+        if ("fog" in tokens && "light" in tokens) {
+            if ("on" in tokens) return "FOG_LIGHTS_ON"
+            if ("off" in tokens) return "FOG_LIGHTS_OFF"
         }
 
-        // Auto headlights
-        if (t.contains("auto") && t.contains("headlight")) {
-            if (t.contains("on")) return "AUTO_HEADLIGHTS_ON"
-            if (t.contains("off")) return "AUTO_HEADLIGHTS_OFF"
+
+        if ("interior" in tokens && "light" in tokens) {
+            if ("on" in tokens) return "INTERIOR_LIGHTS_ON"
+            if ("off" in tokens) return "INTERIOR_LIGHTS_OFF"
         }
 
-        // Auto high beams
-        if (t.contains("auto") && (t.contains("high beam") || t.contains("brights"))) {
-            if (t.contains("on")) return "AUTO_HIGH_BEAMS_ON"
-            if (t.contains("off")) return "AUTO_HIGH_BEAMS_OFF"
+
+        if ("auto" in tokens && "headlight" in tokens) {
+            if ("on" in tokens) return "AUTO_HEADLIGHTS_ON"
+            if ("off" in tokens) return "AUTO_HEADLIGHTS_OFF"
         }
+
+
+        if ("auto" in tokens && "high" in tokens && "beam" in tokens) {
+            if ("on" in tokens) return "AUTO_HIGH_BEAMS_ON"
+            if ("off" in tokens) return "AUTO_HIGH_BEAMS_OFF"
+        }
+
 
         // ============================================================
-        // BODY (TRUNK / HOOD / GAS CAP)
+        // BODY
         // ============================================================
-        if (t.contains("open") && t.contains("trunk")) return "TRUNK_OPEN"
-        if (t.contains("open") && t.contains("hood")) return "HOOD_OPEN"
-        if (t.contains("gas cap") || t.contains("fuel door")) return "GAS_CAP_OPEN"
+        if ("open" in tokens && "trunk" in tokens) return "TRUNK_OPEN"
+        if ("open" in tokens && "hood" in tokens) return "HOOD_OPEN"
+        if ("gas" in tokens && "cap" in tokens) return "GAS_CAP_OPEN"
+        if ("fuel" in tokens && "door" in tokens) return "GAS_CAP_OPEN"
+
 
         // ============================================================
-        // CLIMATE / AC / HEAT
+        // CLIMATE
         // ============================================================
-        if (t.contains("ac") && t.contains("on")) return "AC_ON"
-        if (t.contains("ac") && t.contains("off")) return "AC_OFF"
+        if ("ac" in tokens && "on" in tokens) return "AC_ON"
+        if ("ac" in tokens && "off" in tokens) return "AC_OFF"
 
-        if (t.contains("fan") && t.contains("up")) return "FAN_UP"
-        if (t.contains("fan") && t.contains("down")) return "FAN_DOWN"
 
-        if (t.contains("temp") && t.contains("up")) return "TEMP_UP"
-        if (t.contains("temp") && t.contains("down")) return "TEMP_DOWN"
+        if ("fan" in tokens && "up" in tokens) return "FAN_UP"
+        if ("fan" in tokens && "down" in tokens) return "FAN_DOWN"
 
-        // Defrost / Defog
-        if (t.contains("rear defogger") && t.contains("on")) return "DEFROST_REAR"
-        if (t.contains("rear defogger") && t.contains("off")) return "DEFROST_REAR_OFF"
 
-        if (t.contains("defrost") && t.contains("front")) return "DEFROST_FRONT"
-        if (t.contains("defrost") && t.contains("rear")) return "DEFROST_REAR"
-        if (t.contains("defog") && t.contains("front")) return "DEFROST_FRONT"
-        if (t.contains("defog") && t.contains("rear")) return "DEFROST_REAR"
+        if ("temp" in tokens && "up" in tokens) return "TEMP_UP"
+        if ("temp" in tokens && "down" in tokens) return "TEMP_DOWN"
+
+
+        // Defrost
+        if ("rear" in tokens && "defogger" in tokens && "on" in tokens) return "DEFROST_REAR"
+        if ("rear" in tokens && "defogger" in tokens && "off" in tokens) return "DEFROST_REAR_OFF"
+
+
+        if ("defrost" in tokens && "front" in tokens) return "DEFROST_FRONT"
+        if ("defrost" in tokens && "rear" in tokens) return "DEFROST_REAR"
+
 
         // Climate modes
-        if (t.contains("auto climate") && t.contains("on")) return "CLIMATE_AUTO_ON"
-        if (t.contains("auto climate") && t.contains("off")) return "CLIMATE_AUTO_OFF"
+        if ("auto" in tokens && "climate" in tokens && "on" in tokens) return "CLIMATE_AUTO_ON"
+        if ("auto" in tokens && "climate" in tokens && "off" in tokens) return "CLIMATE_AUTO_OFF"
 
-        if (t.contains("sync") && t.contains("temp")) return "CLIMATE_SYNC_ON"
-        if (t.contains("unsync") || (t.contains("sync") && t.contains("off"))) return "CLIMATE_SYNC_OFF"
 
-        if (t.contains("dual") && t.contains("on")) return "CLIMATE_DUAL_ON"
-        if (t.contains("dual") && t.contains("off")) return "CLIMATE_DUAL_OFF"
+        // Sync vs unsync (safe ordering)
+        if ("unsync" in tokens) return "CLIMATE_SYNC_OFF"
+        if ("sync" in tokens && "temp" in tokens) return "CLIMATE_SYNC_ON"
+
+
+        if ("dual" in tokens && "on" in tokens) return "CLIMATE_DUAL_ON"
+        if ("dual" in tokens && "off" in tokens) return "CLIMATE_DUAL_OFF"
+
 
         // ============================================================
         // ECO MODE
         // ============================================================
-        if (t.contains("eco mode") && t.contains("on")) return "ECO_MODE_ON"
-        if (t.contains("eco mode") && t.contains("off")) return "ECO_MODE_OFF"
+        if ("eco" in tokens && "mode" in tokens && "on" in tokens) return "ECO_MODE_ON"
+        if ("eco" in tokens && "mode" in tokens && "off" in tokens) return "ECO_MODE_OFF"
+
 
         // ============================================================
         // TRACTION CONTROL
         // ============================================================
-        if (t.contains("traction") && t.contains("on")) return "TRACTION_CONTROL_ON"
-        if (t.contains("traction") && t.contains("off")) return "TRACTION_CONTROL_OFF"
+        if ("traction" in tokens && "on" in tokens) return "TRACTION_CONTROL_ON"
+        if ("traction" in tokens && "off" in tokens) return "TRACTION_CONTROL_OFF"
+
 
         // ============================================================
         // PARKING SENSORS
         // ============================================================
-        if (t.contains("parking sensor") || t.contains("parking sensors")) {
-            if (t.contains("on")) return "PARKING_SENSORS_ON"
-            if (t.contains("off")) return "PARKING_SENSORS_OFF"
+        if ("parking" in tokens && "sensor" in tokens) {
+            if ("on" in tokens) return "PARKING_SENSORS_ON"
+            if ("off" in tokens) return "PARKING_SENSORS_OFF"
         }
+
 
         // ============================================================
         // DASH BRIGHTNESS
         // ============================================================
-        if (t.contains("dash") && t.contains("bright")) return "DASH_BRIGHTNESS_UP"
-        if (t.contains("dash") && (t.contains("dim") || t.contains("dark"))) return "DASH_BRIGHTNESS_DOWN"
+        if ("dash" in tokens && "bright" in tokens) return "DASH_BRIGHTNESS_UP"
+        if ("dash" in tokens && ("dim" in tokens || "dark" in tokens)) return "DASH_BRIGHTNESS_DOWN"
+
 
         // ============================================================
-        // BLIND SPOT / LANE CAMERA
+        // LANEWATCH / CAMERA
         // ============================================================
-        if (t.contains("lane watch") || t.contains("right camera") || t.contains("blind spot camera")) {
-            if (t.contains("on")) return "LANEWATCH_ON"
-            if (t.contains("off")) return "LANEWATCH_OFF"
+        if ("lane" in tokens && "watch" in tokens) {
+            if ("on" in tokens) return "LANEWATCH_ON"
+            if ("off" in tokens) return "LANEWATCH_OFF"
         }
 
+
         // ============================================================
-        // WIPERS / WASHER
+        // WIPERS
         // ============================================================
-        if (t.contains("wiper") && t.contains("on")) return "WIPERS_ON"
-        if (t.contains("wiper") && t.contains("off")) return "WIPERS_OFF"
-        if (t.contains("washer") || t.contains("spray")) return "WASHER_SPRAY"
+        if ("wiper" in tokens && "on" in tokens) return "WIPERS_ON"
+        if ("wiper" in tokens && "off" in tokens) return "WIPERS_OFF"
+        if ("washer" in tokens || "spray" in tokens) return "WASHER_SPRAY"
+
 
         // ============================================================
         // MIRRORS
         // ============================================================
-        if (t.contains("fold") && t.contains("mirror")) return "MIRROR_FOLD"
-        if (t.contains("unfold") && t.contains("mirror")) return "MIRROR_UNFOLD"
+        if ("fold" in tokens && "mirror" in tokens) return "MIRROR_FOLD"
+        if ("unfold" in tokens && "mirror" in tokens) return "MIRROR_UNFOLD"
+
 
         // ============================================================
         // SEATS
         // ============================================================
-        if (t.contains("seat") && t.contains("heat") && t.contains("on")) return "SEAT_HEATER_ON"
-        if (t.contains("seat") && t.contains("heat") && t.contains("off")) return "SEAT_HEATER_OFF"
+        if ("seat" in tokens && "heat" in tokens && "on" in tokens) return "SEAT_HEATER_ON"
+        if ("seat" in tokens && "heat" in tokens && "off" in tokens) return "SEAT_HEATER_OFF"
+
 
         // ============================================================
         // CRUISE CONTROL
         // ============================================================
-        if (t.contains("cruise") && t.contains("on")) return "CRUISE_ON"
-        if (t.contains("cruise") && t.contains("off")) return "CRUISE_OFF"
-        if (t.contains("resume") && t.contains("cruise")) return "CRUISE_RESUME"
-        if (t.contains("cancel") && t.contains("cruise")) return "CRUISE_CANCEL"
+        if ("cruise" in tokens && "on" in tokens) return "CRUISE_ON"
+        if ("cruise" in tokens && "off" in tokens) return "CRUISE_OFF"
+        if ("resume" in tokens && "cruise" in tokens) return "CRUISE_RESUME"
+        if ("cancel" in tokens && "cruise" in tokens) return "CRUISE_CANCEL"
 
-        if (t.contains("cruise") && t.contains("set")) {
-            val speed = extractSpeed(t)
-            if (speed != null) return "CRUISE_SET_$speed"
+
+        if ("cruise" in tokens && "set" in tokens) {
+            val speed = extractSpeed(lower)
+            if (speed != null && speed in 0..200) {
+                return "CRUISE_SET_$speed"
+            }
         }
+
 
         // ============================================================
         // AUDIO / INFOTAINMENT
         // ============================================================
-        if (t.contains("mute") && t.contains("navigation")) return "NAV_VOICE_MUTE"
-        if (t.contains("unmute") && t.contains("navigation")) return "NAV_VOICE_UNMUTE"
+        if ("navigation" in tokens && "mute" in tokens) return "NAV_VOICE_MUTE"
+        if ("navigation" in tokens && "unmute" in tokens) return "NAV_VOICE_UNMUTE"
 
-        if (t.contains("mute") && t.contains("volume")) return "AUDIO_MUTE"
-        if (t.contains("unmute") && t.contains("volume")) return "AUDIO_UNMUTE"
 
-        if (t.contains("volume") && t.contains("up")) return "AUDIO_VOLUME_UP"
-        if (t.contains("volume") && t.contains("down")) return "AUDIO_VOLUME_DOWN"
+        // Safe ordering: unmute before mute
+        if ("unmute" in tokens && "volume" in tokens) return "AUDIO_UNMUTE"
+        if ("mute" in tokens && "volume" in tokens) return "AUDIO_MUTE"
 
-        if (t.contains("increase") && t.contains("volume")) return "AUDIO_VOLUME_UP"
-        if (t.contains("decrease") && t.contains("volume")) return "AUDIO_VOLUME_DOWN"
 
-        if (t.contains("raise") && t.contains("volume")) return "AUDIO_VOLUME_UP"
-        if (t.contains("lower") && t.contains("volume")) return "AUDIO_VOLUME_DOWN"
+        if ("volume" in tokens && "up" in tokens) return "AUDIO_VOLUME_UP"
+        if ("volume" in tokens && "down" in tokens) return "AUDIO_VOLUME_DOWN"
+
+
+        if ("increase" in tokens && "volume" in tokens) return "AUDIO_VOLUME_UP"
+        if ("decrease" in tokens && "volume" in tokens) return "AUDIO_VOLUME_DOWN"
+
+
+        if ("raise" in tokens && "volume" in tokens) return "AUDIO_VOLUME_UP"
+        if ("lower" in tokens && "volume" in tokens) return "AUDIO_VOLUME_DOWN"
+
 
         // Audio source switching
-        if (t.contains("bluetooth audio")) return "AUDIO_SOURCE_BT"
-        if (t.contains("fm radio") || (t.contains("fm") && t.contains("radio"))) return "AUDIO_SOURCE_FM"
-        if (t.contains("am radio") || (t.contains("am") && t.contains("radio"))) return "AUDIO_SOURCE_AM"
-        if (t.contains("xm radio") || t.contains("satellite radio")) return "AUDIO_SOURCE_XM"
-        if (t.contains("usb") && t.contains("audio")) return "AUDIO_SOURCE_USB"
+        if ("bluetooth" in tokens && "audio" in tokens) return "AUDIO_SOURCE_BT"
+        if ("fm" in tokens && "radio" in tokens) return "AUDIO_SOURCE_FM"
+        if ("am" in tokens && "radio" in tokens) return "AUDIO_SOURCE_AM"
+        if ("xm" in tokens || "satellite" in tokens) return "AUDIO_SOURCE_XM"
+        if ("usb" in tokens && "audio" in tokens) return "AUDIO_SOURCE_USB"
+
 
         // ============================================================
         // FALLBACK
         // ============================================================
         return "UNKNOWN_AUTOMOTIVE_COMMAND"
     }
+
 
     private fun extractSpeed(t: String): Int? {
         val regex = Regex("""\b(\d{2,3})\b""")

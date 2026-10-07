@@ -4,11 +4,43 @@ import android.util.Log
 import kotlinx.coroutines.flow.Flow
 
 /**
- * Abstraction over the CAN transport layer.
+ * Canonical command sent from BabyNode Automotive
+ * to BabyNodeCAN over Bluetooth.
+ */
+data class CanonicalCommand(
+    val command: String,
+    val value: String? = null
+) {
+    init {
+        Log.i(
+            "CanonicalCommand",
+            "Constructed command=$command value=$value"
+        )
+    }
+}
+
+/**
+ * Bluetooth message envelope.
+ */
+data class BluetoothMessage(
+    val id: Long,
+    val type: String,
+    val command: String,
+    val value: String? = null
+) {
+    init {
+        Log.i(
+            "BluetoothMessage",
+            "Created message id=$id type=$type command=$command"
+        )
+    }
+}
+
+/**
+ * Abstraction over the BabyNode Automotive transport layer.
  *
- * Transport selection (Mock/TCP) has been removed.
- * TCP is now always used, but this interface remains
- * as the unified abstraction for the transport pipeline.
+ * Android sends canonical commands.
+ * BabyNodeCAN converts those commands into vehicle-specific CAN traffic.
  */
 interface CarCanTransport {
 
@@ -18,8 +50,6 @@ interface CarCanTransport {
 
     /**
      * Connect to the underlying transport.
-     *
-     * Implementations (TCP) will override this.
      */
     suspend fun connect() {
         Log.i(TAG, "connect(): Default transport connect invoked")
@@ -33,21 +63,17 @@ interface CarCanTransport {
     }
 
     /**
-     * Send a raw CAN frame.
-     *
-     * Dispatcher will call this for outgoing CAN traffic.
+     * Send a canonical command.
      */
-    suspend fun sendFrame(frame: CarCanFrame) {
+    suspend fun sendCommand(command: CanonicalCommand) {
         Log.i(
             TAG,
-            "sendFrame(): Default transport send invoked for frame id=${frame.id}, bytes=${frame.data.size}"
+            "sendCommand(): command=${command.command}, value=${command.value}"
         )
     }
 
     /**
      * Observe status/events from the transport.
-     *
-     * TCP transport emits Connected, Disconnected, FrameReceived, etc.
      */
     fun status(): Flow<CarStatusEvent>
 
@@ -59,41 +85,72 @@ interface CarCanTransport {
     }
 }
 
-data class CarCanFrame(
-    val id: Int,
-    val data: ByteArray
-) {
-    init {
-        Log.i("CarCanFrame", "Constructed CAN frame id=$id bytes=${data.size}")
-    }
-}
-
 /**
  * Unified status events emitted by the transport.
  */
 sealed class CarStatusEvent {
 
     init {
-        Log.i("CarStatusEvent", "Event created: ${this::class.simpleName}")
+        Log.i(
+            "CarStatusEvent",
+            "Event created: ${this::class.simpleName}"
+        )
     }
 
-    data class Connected(val transportName: String) : CarStatusEvent() {
-        init { Log.i("CarStatusEvent", "Connected($transportName)") }
+    data class Connected(
+        val transportName: String
+    ) : CarStatusEvent() {
+        init {
+            Log.i(
+                "CarStatusEvent",
+                "Connected($transportName)"
+            )
+        }
     }
 
-    data class Disconnected(val transportName: String) : CarStatusEvent() {
-        init { Log.i("CarStatusEvent", "Disconnected($transportName)") }
+    data class Disconnected(
+        val transportName: String
+    ) : CarStatusEvent() {
+        init {
+            Log.i(
+                "CarStatusEvent",
+                "Disconnected($transportName)"
+            )
+        }
     }
 
-    data class Error(val message: String, val throwable: Throwable? = null) : CarStatusEvent() {
-        init { Log.e("CarStatusEvent", "Error: $message throwable=${throwable?.message}") }
+    data class Error(
+        val message: String,
+        val throwable: Throwable? = null
+    ) : CarStatusEvent() {
+        init {
+            Log.e(
+                "CarStatusEvent",
+                "Error: $message throwable=${throwable?.message}"
+            )
+        }
     }
 
-    data class FrameReceived(val frame: CarCanFrame) : CarStatusEvent() {
-        init { Log.i("CarStatusEvent", "FrameReceived id=${frame.id} bytes=${frame.data.size}") }
+    data class CommandSent(
+        val command: CanonicalCommand
+    ) : CarStatusEvent() {
+        init {
+            Log.i(
+                "CarStatusEvent",
+                "CommandSent command=${command.command}"
+            )
+        }
     }
 
-    data class FrameSent(val frame: CarCanFrame) : CarStatusEvent() {
-        init { Log.i("CarStatusEvent", "FrameSent id=${frame.id} bytes=${frame.data.size}") }
+    data class CommandResponse(
+        val commandId: Long,
+        val status: String
+    ) : CarStatusEvent() {
+        init {
+            Log.i(
+                "CarStatusEvent",
+                "CommandResponse id=$commandId status=$status"
+            )
+        }
     }
 }

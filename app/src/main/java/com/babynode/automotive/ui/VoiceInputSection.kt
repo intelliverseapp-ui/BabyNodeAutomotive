@@ -5,8 +5,13 @@ import android.speech.RecognizerIntent
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -21,104 +26,187 @@ fun VoiceInputSection(
     dispatcher: CarCommandDispatcher,
     status: CarStatusEvent?
 ) {
-    Log.i(TAG, "Render VoiceInputSection(): latestEvent=$status")
 
-    var recognizedText by remember { mutableStateOf("") }
-    var localStatus by remember { mutableStateOf("Ready for voice command") }
+    Log.i(
+        TAG,
+        "Render VoiceInputSection(): latestEvent=$status"
+    )
 
-    // ⭐ Android voice recognition launcher
-    val voiceLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-
-        Log.i(TAG, "VOICE CALLBACK FIRED")
-
-        val data = result.data
-        val matches = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-        val spoken = matches?.firstOrNull() ?: ""
-
-        Log.i(TAG, "Recognized speech: \"$spoken\"")
-
-        recognizedText = spoken
-
-        if (spoken.isNotEmpty()) {
-            if (CarCommandDetector.isAutomotive(spoken)) {
-                Log.i(TAG, "Recognized automotive command → dispatching")
-                dispatcher.handle(spoken)
-                localStatus = "Executed: $spoken"
-            } else {
-                Log.i(TAG, "Recognized NON-automotive speech → rejected")
-                localStatus = "Not an automotive command"
-            }
-        } else {
-            Log.i(TAG, "No speech detected")
-            localStatus = "No speech detected"
-        }
+    var recognizedText by remember {
+        mutableStateOf("")
     }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    var localStatus by remember {
+        mutableStateOf("Ready for voice command")
+    }
+
+    val voiceLauncher =
+        rememberLauncherForActivityResult(
+            contract =
+                ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+
+            Log.i(
+                TAG,
+                "VOICE CALLBACK FIRED"
+            )
+
+            val data = result.data
+
+            val matches =
+                data?.getStringArrayListExtra(
+                    RecognizerIntent.EXTRA_RESULTS
+                )
+
+            val spoken =
+                matches?.firstOrNull() ?: ""
+
+            Log.i(
+                TAG,
+                "Recognized speech: \"$spoken\""
+            )
+
+            recognizedText = spoken
+
+            if (spoken.isNotEmpty()) {
+
+                if (
+                    CarCommandDetector.isAutomotive(
+                        spoken
+                    )
+                ) {
+
+                    Log.i(
+                        TAG,
+                        "Recognized automotive command → dispatching"
+                    )
+
+                    dispatcher.handle(
+                        spoken
+                    )
+
+                    localStatus =
+                        "Executed: $spoken"
+
+                } else {
+
+                    Log.i(
+                        TAG,
+                        "Recognized NON-automotive speech → rejected"
+                    )
+
+                    localStatus =
+                        "Not an automotive command"
+                }
+
+            } else {
+
+                Log.i(
+                    TAG,
+                    "No speech detected"
+                )
+
+                localStatus =
+                    "No speech detected"
+            }
+        }
+
+    Column(
+        modifier = Modifier.fillMaxWidth()
+    ) {
 
         Text(
             text = "Voice Input",
             style = MaterialTheme.typography.titleLarge
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(
+            modifier = Modifier.height(8.dp)
+        )
 
-        // ⭐ Speak Command Button
         Button(
             onClick = {
-                Log.i(TAG, "Speak Command button clicked")
 
-                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                    putExtra(
-                        RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                        RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-                    )
-                    putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak automotive command")
-                }
+                Log.i(
+                    TAG,
+                    "Speak Command button clicked"
+                )
 
-                Log.i(TAG, "Launching voice recognition intent")
+                val intent =
+                    Intent(
+                        RecognizerIntent.ACTION_RECOGNIZE_SPEECH
+                    ).apply {
+
+                        putExtra(
+                            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                        )
+
+                        putExtra(
+                            RecognizerIntent.EXTRA_PROMPT,
+                            "Speak automotive command"
+                        )
+                    }
+
+                Log.i(
+                    TAG,
+                    "Launching voice recognition intent"
+                )
+
                 voiceLauncher.launch(intent)
             }
         ) {
+
             Text("Speak Command")
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(
+            modifier = Modifier.height(16.dp)
+        )
 
-        // ⭐ Show recognized text
-        Log.i(TAG, "Rendering recognized text: \"$recognizedText\"")
         Text(
             text = "Heard: $recognizedText",
             style = MaterialTheme.typography.bodyLarge
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(
+            modifier = Modifier.height(8.dp)
+        )
 
-        // ⭐ Status output (local + transport status)
         val statusText = buildString {
+
             append(localStatus)
+
             if (status != null) {
+
                 append("\nTransport: ")
+
                 append(
                     when (status) {
+
                         is CarStatusEvent.Connected ->
                             "Connected (${status.transportName})"
+
                         is CarStatusEvent.Disconnected ->
                             "Disconnected (${status.transportName})"
+
                         is CarStatusEvent.Error ->
                             "Error: ${status.message}"
-                        is CarStatusEvent.FrameReceived ->
-                            "Frame received: ID=${status.frame.id}"
-                        is CarStatusEvent.FrameSent ->
-                            "Frame sent: ID=${status.frame.id}"
+
+                        is CarStatusEvent.CommandSent ->
+                            "Command sent: ${status.command.command}"
+
+                        is CarStatusEvent.CommandResponse ->
+                            "Response: ${status.status}"
                     }
                 )
             }
         }
 
-        Log.i(TAG, "Rendering status text: $statusText")
+        Log.i(
+            TAG,
+            "Rendering status text: $statusText"
+        )
 
         Text(
             text = statusText,
