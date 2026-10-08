@@ -6,6 +6,28 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 /**
+ * Result returned to the voice or typed interface for one deliberate
+ * user submission.
+ *
+ * A Submitted result provides the exact transport request identity
+ * that the originating UI must use when filtering later events.
+ */
+sealed interface CarCommandDispatchResult {
+
+    data class Submitted(
+        val request: CarCommandRequest
+    ) : CarCommandDispatchResult
+
+    data class Rejected(
+        val reason: String
+    ) : CarCommandDispatchResult
+
+    data class Failed(
+        val message: String
+    ) : CarCommandDispatchResult
+}
+
+/**
  * CarCommandDispatcher
  *
  * Pipeline:
@@ -35,6 +57,21 @@ class CarCommandDispatcher(
         private const val MODULE_CONFIG_COMMAND =
             "config.module"
 
+        private const val REJECTION_EMPTY =
+            "empty_request"
+
+        private const val REJECTION_UNKNOWN =
+            "unknown_command"
+
+        private const val REJECTION_NEGATED =
+            "negated_command"
+
+        private const val REJECTION_OUT_OF_SCOPE =
+            "out_of_scope_command"
+
+        private const val REJECTION_INVALID_CANONICAL =
+            "invalid_canonical_command"
+
         private val CANONICAL_COMMAND_PATTERN =
             Regex(
                 pattern =
@@ -45,8 +82,9 @@ class CarCommandDispatcher(
     /**
      * Sends the selected BabyNodeCAN module configuration.
      *
-     * This is a protocol configuration command rather than a
-     * user-operated vehicle command.
+     * This is an internal protocol request. Its returned request ID
+     * is intentionally not exposed to the voice or typed interfaces,
+     * so its response cannot be treated as a user-command result.
      */
     fun sendModuleConfig(
         moduleJsonId: String
@@ -70,18 +108,20 @@ class CarCommandDispatcher(
 
         scope.launch {
             try {
-                transport.sendCommand(
-                    CanonicalCommand(
-                        command =
-                            MODULE_CONFIG_COMMAND,
-                        value =
-                            normalizedModuleId
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                MODULE_CONFIG_COMMAND,
+                            value =
+                                normalizedModuleId
+                        )
                     )
-                )
 
                 Log.i(
                     TAG,
-                    "Module configuration request submitted"
+                    "Module configuration request submitted: " +
+                        "id=${request.requestId}"
                 )
             } catch (e: CancellationException) {
                 Log.i(
@@ -101,15 +141,22 @@ class CarCommandDispatcher(
     }
 
     /**
-     * Maps natural-language input and submits it only when the
-     * resulting command is approved for Phase 1.
+     * Maps and submits one deliberate user request.
      *
-     * This function does not claim that the vehicle physically
-     * executed the request. Transport and acknowledgment status
-     * are reported through CarStatusEvent.
+     * The result callback is invoked with:
+     *
+     * - Submitted, containing the exact request ID and canonical
+     *   command after the transport write succeeds
+     * - Rejected, when mapping or safety validation rejects the text
+     * - Failed, when the approved command cannot be transmitted
+     *
+     * This function never claims that a physical vehicle action
+     * completed.
      */
     fun handle(
-        text: String
+        text: String,
+        onResult:
+            (CarCommandDispatchResult) -> Unit
     ) {
         val normalizedInput =
             text.trim()
@@ -118,6 +165,13 @@ class CarCommandDispatcher(
             Log.w(
                 TAG,
                 "Empty command request rejected"
+            )
+
+            onResult(
+                CarCommandDispatchResult.Rejected(
+                    reason =
+                        REJECTION_EMPTY
+                )
             )
 
             return
@@ -135,6 +189,13 @@ class CarCommandDispatcher(
                     "Unknown automotive request rejected"
                 )
 
+                onResult(
+                    CarCommandDispatchResult.Rejected(
+                        reason =
+                            REJECTION_UNKNOWN
+                    )
+                )
+
                 return
             }
 
@@ -144,6 +205,13 @@ class CarCommandDispatcher(
                     "Negated automotive request rejected"
                 )
 
+                onResult(
+                    CarCommandDispatchResult.Rejected(
+                        reason =
+                            REJECTION_NEGATED
+                    )
+                )
+
                 return
             }
 
@@ -151,6 +219,13 @@ class CarCommandDispatcher(
                 Log.w(
                     TAG,
                     "Out-of-scope automotive request rejected"
+                )
+
+                onResult(
+                    CarCommandDispatchResult.Rejected(
+                        reason =
+                            REJECTION_OUT_OF_SCOPE
+                    )
                 )
 
                 return
@@ -167,28 +242,47 @@ class CarCommandDispatcher(
                 "Canonical-command safety validation failed"
             )
 
+            onResult(
+                CarCommandDispatchResult.Rejected(
+                    reason =
+                        REJECTION_INVALID_CANONICAL
+                )
+            )
+
             return
         }
 
+        val command =
+            CanonicalCommand(
+                command =
+                    canonicalCommand
+            )
+
         Log.i(
             TAG,
-            "Approved Phase 1 command submitted: " +
+            "Approved Phase 1 command awaiting transport write: " +
                 canonicalCommand
         )
 
         scope.launch {
             try {
-                transport.sendCommand(
-                    CanonicalCommand(
-                        command =
-                            canonicalCommand
+                val request =
+                    transport.sendCommand(
+                        command
                     )
-                )
 
                 Log.i(
                     TAG,
-                    "Transport request completed for canonical command: " +
-                        canonicalCommand
+                    "User command transmitted: " +
+                        "id=${request.requestId}, " +
+                        "command=${request.command.command}"
+                )
+
+                onResult(
+                    CarCommandDispatchResult.Submitted(
+                        request =
+                            request
+                    )
                 )
             } catch (e: CancellationException) {
                 Log.i(
@@ -196,23 +290,86 @@ class CarCommandDispatcher(
                     "Canonical command request cancelled"
                 )
 
+                onResult(
+                    CarCommandDispatchResult.Failed(
+                        message =
+                            "Command request cancelled"
+                    )
+                )
+
                 throw e
             } catch (e: Exception) {
+                val message =
+                    "Command could not be transmitted: " +
+                        (
+                            e.message
+                                ?: e.javaClass.simpleName
+                        )
+
                 Log.e(
                     TAG,
-                    "Canonical command request failed",
+                    message,
                     e
+                )
+
+                onResult(
+                    CarCommandDispatchResult.Failed(
+                        message =
+                            message
+                    )
                 )
             }
         }
     }
 
     /**
+     * Compatibility entry point for call sites that do not yet need
+     * the returned request identity.
+     *
+     * Voice and typed interfaces must use the callback overload above
+     * so they can correlate their own transport events.
+     */
+    fun handle(
+        text: String
+    ) {
+        handle(
+            text =
+                text,
+            onResult = { result ->
+                when (result) {
+                    is CarCommandDispatchResult.Submitted -> {
+                        Log.i(
+                            TAG,
+                            "Compatibility submission completed: " +
+                                "id=${result.request.requestId}"
+                        )
+                    }
+
+                    is CarCommandDispatchResult.Rejected -> {
+                        Log.w(
+                            TAG,
+                            "Compatibility submission rejected: " +
+                                result.reason
+                        )
+                    }
+
+                    is CarCommandDispatchResult.Failed -> {
+                        Log.e(
+                            TAG,
+                            result.message
+                        )
+                    }
+                }
+            }
+        )
+    }
+
+    /**
      * Defense-in-depth validation.
      *
-     * CarCommandMap already enforces the Phase 1 allowlist.
-     * This check prevents sentinel values and malformed command
-     * names from reaching the Bluetooth transport.
+     * CarCommandMap already enforces the Phase 1 allowlist. This
+     * check prevents sentinel values, protocol commands, and malformed
+     * canonical names from reaching the Bluetooth transport.
      */
     private fun isValidCanonicalCommand(
         command: String
@@ -230,7 +387,10 @@ class CarCommandDispatcher(
         }
 
         if (
-            command == MODULE_CONFIG_COMMAND
+            command.equals(
+                MODULE_CONFIG_COMMAND,
+                ignoreCase = true
+            )
         ) {
             return false
         }

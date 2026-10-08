@@ -18,7 +18,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.babynode.automotive.CarCommandDetector
+import com.babynode.automotive.CarCommandDispatchResult
 import com.babynode.automotive.CarCommandDispatcher
+import com.babynode.automotive.CarCommandRequest
 import com.babynode.automotive.CarStatusEvent
 
 private const val TAG =
@@ -27,8 +29,10 @@ private const val TAG =
 private enum class TypedRequestState {
     READY,
     EDITING,
+    DISPATCHING,
     REJECTED,
-    SUBMITTED
+    SUBMITTED,
+    FAILED
 }
 
 @Composable
@@ -46,48 +50,61 @@ fun CommandTestSection(
         )
     }
 
+    var activeRequest by remember {
+        mutableStateOf<CarCommandRequest?>(
+            null
+        )
+    }
+
     var transportStatusForCurrentRequest by remember {
         mutableStateOf<CarStatusEvent?>(
             null
         )
     }
 
-    var waitingForFreshTransportEvent by remember {
-        mutableStateOf(
-            false
+    var rejectionReason by remember {
+        mutableStateOf<String?>(
+            null
+        )
+    }
+
+    var failureMessage by remember {
+        mutableStateOf<String?>(
+            null
         )
     }
 
     /*
-     * Associate transport events with this typed request only after
-     * the typed request has been submitted.
+     * Accept only transport events whose request ID and canonical
+     * command match the exact typed request returned by the
+     * dispatcher.
      *
-     * This prevents a voice-command acknowledgment from appearing
-     * as the result of the typed-command section.
+     * Voice requests, automatic config.module requests, previous
+     * typed requests, late responses, and unrelated transport events
+     * are ignored by this section.
      */
     LaunchedEffect(
-        status
+        status,
+        activeRequest
     ) {
-        if (
-            waitingForFreshTransportEvent &&
-            status != null
-        ) {
-            when (status) {
-                is CarStatusEvent.CommandSent,
-                is CarStatusEvent.CommandResponse,
-                is CarStatusEvent.Error,
-                is CarStatusEvent.Disconnected -> {
-                    transportStatusForCurrentRequest =
-                        status
-                }
+        val currentRequest =
+            activeRequest
 
-                is CarStatusEvent.Connected -> {
-                    /*
-                     * A connection event is not the result of the
-                     * current typed request.
-                     */
-                }
-            }
+        val currentStatus =
+            status
+
+        if (
+            currentRequest != null &&
+            currentStatus != null &&
+            eventMatchesTypedRequest(
+                event =
+                    currentStatus,
+                request =
+                    currentRequest
+            )
+        ) {
+            transportStatusForCurrentRequest =
+                currentStatus
         }
     }
 
@@ -123,14 +140,20 @@ fun CommandTestSection(
                     }
 
                 /*
-                 * Editing begins a new local request attempt.
-                 * Clear any result associated with the preceding
-                 * typed request.
+                 * Editing starts a new local request attempt.
+                 * Clear all identity and status belonging to the
+                 * preceding typed request.
                  */
-                waitingForFreshTransportEvent =
-                    false
+                activeRequest =
+                    null
 
                 transportStatusForCurrentRequest =
+                    null
+
+                rejectionReason =
+                    null
+
+                failureMessage =
                     null
             },
             label = {
@@ -152,16 +175,24 @@ fun CommandTestSection(
 
         Button(
             enabled =
-                commandText.isNotBlank(),
+                commandText.isNotBlank() &&
+                    requestState !=
+                    TypedRequestState.DISPATCHING,
             onClick = {
                 val submittedText =
                     commandText.trim()
 
+                activeRequest =
+                    null
+
                 transportStatusForCurrentRequest =
                     null
 
-                waitingForFreshTransportEvent =
-                    false
+                rejectionReason =
+                    null
+
+                failureMessage =
+                    null
 
                 if (submittedText.isBlank()) {
                     requestState =
@@ -180,6 +211,9 @@ fun CommandTestSection(
                         "Typed request rejected by Phase 1 detector"
                     )
 
+                    rejectionReason =
+                        "not a supported Phase 1 command"
+
                     requestState =
                         TypedRequestState.REJECTED
 
@@ -188,22 +222,107 @@ fun CommandTestSection(
 
                 Log.i(
                     TAG,
-                    "Supported typed request submitted"
+                    "Supported typed request awaiting dispatch result"
                 )
 
                 requestState =
-                    TypedRequestState.SUBMITTED
-
-                waitingForFreshTransportEvent =
-                    true
+                    TypedRequestState.DISPATCHING
 
                 dispatcher.handle(
-                    submittedText
+                    text =
+                        submittedText,
+                    onResult = { dispatchResult ->
+                        when (dispatchResult) {
+                            is CarCommandDispatchResult.Submitted -> {
+                                val request =
+                                    dispatchResult.request
+
+                                activeRequest =
+                                    request
+
+                                requestState =
+                                    TypedRequestState.SUBMITTED
+
+                                /*
+                                 * A fast response may already be the
+                                 * latest global event when the request
+                                 * identity reaches this callback.
+                                 */
+                                if (
+                                    status != null &&
+                                    eventMatchesTypedRequest(
+                                        event =
+                                            status,
+                                        request =
+                                            request
+                                    )
+                                ) {
+                                    transportStatusForCurrentRequest =
+                                        status
+                                }
+
+                                Log.i(
+                                    TAG,
+                                    "Typed request correlated: " +
+                                        "id=${request.requestId}, " +
+                                        "command=${request.command.command}"
+                                )
+                            }
+
+                            is CarCommandDispatchResult.Rejected -> {
+                                activeRequest =
+                                    null
+
+                                transportStatusForCurrentRequest =
+                                    null
+
+                                rejectionReason =
+                                    typedDispatchRejectionText(
+                                        dispatchResult.reason
+                                    )
+
+                                requestState =
+                                    TypedRequestState.REJECTED
+
+                                Log.i(
+                                    TAG,
+                                    "Typed request rejected by dispatcher"
+                                )
+                            }
+
+                            is CarCommandDispatchResult.Failed -> {
+                                activeRequest =
+                                    null
+
+                                transportStatusForCurrentRequest =
+                                    null
+
+                                failureMessage =
+                                    dispatchResult.message
+
+                                requestState =
+                                    TypedRequestState.FAILED
+
+                                Log.e(
+                                    TAG,
+                                    "Typed request dispatch failed"
+                                )
+                            }
+                        }
+                    }
                 )
             }
         ) {
             Text(
-                text = "Send Command"
+                text =
+                    if (
+                        requestState ==
+                        TypedRequestState.DISPATCHING
+                    ) {
+                        "Sending..."
+                    } else {
+                        "Send Command"
+                    }
             )
         }
 
@@ -235,7 +354,12 @@ fun CommandTestSection(
         Text(
             text =
                 typedRequestStatusText(
-                    requestState
+                    requestState =
+                        requestState,
+                    rejectionReason =
+                        rejectionReason,
+                    failureMessage =
+                        failureMessage
                 ),
             style =
                 MaterialTheme.typography.bodyMedium
@@ -253,6 +377,8 @@ fun CommandTestSection(
                 typedTransportStatusText(
                     requestState =
                         requestState,
+                    request =
+                        activeRequest,
                     transportStatus =
                         transportStatusForCurrentRequest
                 ),
@@ -262,8 +388,76 @@ fun CommandTestSection(
     }
 }
 
+private fun eventMatchesTypedRequest(
+    event: CarStatusEvent,
+    request: CarCommandRequest
+): Boolean {
+    return when (event) {
+        is CarStatusEvent.CommandSent -> {
+            event.requestId ==
+                request.requestId &&
+                event.command ==
+                request.command
+        }
+
+        is CarStatusEvent.CommandResponse -> {
+            event.requestId ==
+                request.requestId &&
+                event.command ==
+                request.command
+        }
+
+        is CarStatusEvent.Error -> {
+            event.requestId ==
+                request.requestId &&
+                event.command ==
+                request.command
+        }
+
+        is CarStatusEvent.Connected -> {
+            false
+        }
+
+        is CarStatusEvent.Disconnected -> {
+            false
+        }
+    }
+}
+
+private fun typedDispatchRejectionText(
+    reason: String
+): String {
+    return when (reason) {
+        "empty_request" -> {
+            "empty request"
+        }
+
+        "unknown_command" -> {
+            "not a supported Phase 1 command"
+        }
+
+        "negated_command" -> {
+            "negated command was not transmitted"
+        }
+
+        "out_of_scope_command" -> {
+            "command is outside the Phase 1 safety scope"
+        }
+
+        "invalid_canonical_command" -> {
+            "command failed safety validation"
+        }
+
+        else -> {
+            "request was rejected"
+        }
+    }
+}
+
 private fun typedRequestStatusText(
-    requestState: TypedRequestState
+    requestState: TypedRequestState,
+    rejectionReason: String?,
+    failureMessage: String?
 ): String {
     return when (requestState) {
         TypedRequestState.READY -> {
@@ -274,56 +468,76 @@ private fun typedRequestStatusText(
             "Ready to submit"
         }
 
+        TypedRequestState.DISPATCHING -> {
+            "Validating and transmitting request"
+        }
+
         TypedRequestState.REJECTED -> {
-            "Request rejected: not a supported Phase 1 command"
+            "Request rejected: " +
+                (
+                    rejectionReason
+                        ?: "request was not approved"
+                )
         }
 
         TypedRequestState.SUBMITTED -> {
             "Request submitted"
+        }
+
+        TypedRequestState.FAILED -> {
+            "Request failed: " +
+                (
+                    failureMessage
+                        ?: "transport failure"
+                )
         }
     }
 }
 
 private fun typedTransportStatusText(
     requestState: TypedRequestState,
+    request: CarCommandRequest?,
     transportStatus: CarStatusEvent?
 ): String {
-    if (
-        requestState == TypedRequestState.REJECTED
-    ) {
-        return "Transport: No command transmitted"
+    when (requestState) {
+        TypedRequestState.READY,
+        TypedRequestState.EDITING -> {
+            return "Transport: No typed request submitted"
+        }
+
+        TypedRequestState.DISPATCHING -> {
+            return "Transport: Preparing command request"
+        }
+
+        TypedRequestState.REJECTED -> {
+            return "Transport: No command transmitted"
+        }
+
+        TypedRequestState.FAILED -> {
+            return "Transport: Command was not transmitted"
+        }
+
+        TypedRequestState.SUBMITTED -> {
+            /*
+             * Continue to the request-correlated transport status.
+             */
+        }
     }
 
-    if (
-        requestState == TypedRequestState.READY ||
-        requestState == TypedRequestState.EDITING
-    ) {
-        return "Transport: No typed request submitted"
+    if (request == null) {
+        return "Transport: Waiting for request identity"
     }
 
     return when (transportStatus) {
         null -> {
-            "Transport: Waiting for command status"
-        }
-
-        is CarStatusEvent.Connected -> {
-            "Transport: Connected to " +
-                transportStatus.transportName
-        }
-
-        is CarStatusEvent.Disconnected -> {
-            "Transport: Disconnected from " +
-                transportStatus.transportName
-        }
-
-        is CarStatusEvent.Error -> {
-            "Transport: Failed: " +
-                transportStatus.message
+            "Transport: Waiting for command status " +
+                "(id=${request.requestId})"
         }
 
         is CarStatusEvent.CommandSent -> {
             "Transport: Request sent to BabyNodeCAN: " +
-                transportStatus.command.command
+                transportStatus.command.command +
+                " (id=${transportStatus.requestId})"
         }
 
         is CarStatusEvent.CommandResponse -> {
@@ -334,12 +548,28 @@ private fun typedTransportStatusText(
                 )
             ) {
                 "BabyNodeCAN: Request accepted " +
-                    "(id=${transportStatus.commandId})"
+                    "(id=${transportStatus.requestId})"
             } else {
                 "BabyNodeCAN: Response " +
                     transportStatus.status +
-                    " (id=${transportStatus.commandId})"
+                    " (id=${transportStatus.requestId})"
             }
+        }
+
+        is CarStatusEvent.Error -> {
+            "Transport: Failed: " +
+                transportStatus.message +
+                " (id=${request.requestId})"
+        }
+
+        is CarStatusEvent.Connected,
+        is CarStatusEvent.Disconnected -> {
+            /*
+             * General connection events do not belong to this typed
+             * request and are not rendered as its outcome.
+             */
+            "Transport: Waiting for command status " +
+                "(id=${request.requestId})"
         }
     }
 }

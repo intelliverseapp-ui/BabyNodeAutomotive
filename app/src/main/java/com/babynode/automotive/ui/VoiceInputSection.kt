@@ -22,7 +22,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.babynode.automotive.CarCommandDetector
+import com.babynode.automotive.CarCommandDispatchResult
 import com.babynode.automotive.CarCommandDispatcher
+import com.babynode.automotive.CarCommandRequest
 import com.babynode.automotive.CarStatusEvent
 
 private const val TAG =
@@ -33,8 +35,10 @@ private enum class VoiceRequestState {
     LISTENING,
     CANCELLED,
     NO_SPEECH,
+    DISPATCHING,
     REJECTED,
-    SUBMITTED
+    SUBMITTED,
+    FAILED
 }
 
 @Composable
@@ -52,48 +56,60 @@ fun VoiceInputSection(
         )
     }
 
+    var activeRequest by remember {
+        mutableStateOf<CarCommandRequest?>(
+            null
+        )
+    }
+
     var transportStatusForCurrentRequest by remember {
         mutableStateOf<CarStatusEvent?>(
             null
         )
     }
 
-    var waitingForFreshTransportEvent by remember {
-        mutableStateOf(
-            false
+    var rejectionReason by remember {
+        mutableStateOf<String?>(
+            null
+        )
+    }
+
+    var failureMessage by remember {
+        mutableStateOf<String?>(
+            null
         )
     }
 
     /*
-     * A transport event is associated with the current voice request
-     * only after that request has been submitted. This prevents an
-     * acknowledgment from an earlier request from appearing beneath
-     * a newly rejected or cancelled voice request.
+     * Accept only events whose request ID and canonical command
+     * match the exact voice request returned by the dispatcher.
+     *
+     * Automatic config.module traffic, typed commands, older voice
+     * commands, duplicate responses, and unrelated transport events
+     * are ignored by this section.
      */
     LaunchedEffect(
-        status
+        status,
+        activeRequest
     ) {
-        if (
-            waitingForFreshTransportEvent &&
-            status != null
-        ) {
-            when (status) {
-                is CarStatusEvent.CommandSent,
-                is CarStatusEvent.CommandResponse,
-                is CarStatusEvent.Error,
-                is CarStatusEvent.Disconnected -> {
-                    transportStatusForCurrentRequest =
-                        status
-                }
+        val currentRequest =
+            activeRequest
 
-                is CarStatusEvent.Connected -> {
-                    /*
-                     * A connection event is not the result of the
-                     * submitted voice request, so it is not shown as
-                     * that request's transport outcome.
-                     */
-                }
-            }
+        val currentStatus =
+            status
+
+        if (
+            currentRequest != null &&
+            currentStatus != null &&
+            eventMatchesRequest(
+                event =
+                    currentStatus,
+                request =
+                    currentRequest
+            )
+        ) {
+            transportStatusForCurrentRequest =
+                currentStatus
         }
     }
 
@@ -102,6 +118,18 @@ fun VoiceInputSection(
             contract =
                 ActivityResultContracts.StartActivityForResult()
         ) { result ->
+
+            activeRequest =
+                null
+
+            transportStatusForCurrentRequest =
+                null
+
+            rejectionReason =
+                null
+
+            failureMessage =
+                null
 
             if (
                 result.resultCode !=
@@ -114,12 +142,6 @@ fun VoiceInputSection(
 
                 requestState =
                     VoiceRequestState.CANCELLED
-
-                waitingForFreshTransportEvent =
-                    false
-
-                transportStatusForCurrentRequest =
-                    null
 
                 return@rememberLauncherForActivityResult
             }
@@ -138,12 +160,6 @@ fun VoiceInputSection(
 
             recognizedText =
                 spoken
-
-            transportStatusForCurrentRequest =
-                null
-
-            waitingForFreshTransportEvent =
-                false
 
             if (spoken.isBlank()) {
                 Log.i(
@@ -167,6 +183,9 @@ fun VoiceInputSection(
                     "Voice request rejected by Phase 1 detector"
                 )
 
+                rejectionReason =
+                    "not a supported Phase 1 command"
+
                 requestState =
                     VoiceRequestState.REJECTED
 
@@ -175,17 +194,95 @@ fun VoiceInputSection(
 
             Log.i(
                 TAG,
-                "Supported voice request submitted"
+                "Supported voice request awaiting dispatch result"
             )
 
             requestState =
-                VoiceRequestState.SUBMITTED
-
-            waitingForFreshTransportEvent =
-                true
+                VoiceRequestState.DISPATCHING
 
             dispatcher.handle(
-                spoken
+                text =
+                    spoken,
+                onResult = { dispatchResult ->
+                    when (dispatchResult) {
+                        is CarCommandDispatchResult.Submitted -> {
+                            val request =
+                                dispatchResult.request
+
+                            activeRequest =
+                                request
+
+                            requestState =
+                                VoiceRequestState.SUBMITTED
+
+                            /*
+                             * A very fast response may already be the
+                             * latest global status by the time the
+                             * dispatcher returns the request identity.
+                             * Capture it immediately when it matches.
+                             */
+                            if (
+                                status != null &&
+                                eventMatchesRequest(
+                                    event =
+                                        status,
+                                    request =
+                                        request
+                                )
+                            ) {
+                                transportStatusForCurrentRequest =
+                                    status
+                            }
+
+                            Log.i(
+                                TAG,
+                                "Voice request correlated: " +
+                                    "id=${request.requestId}, " +
+                                    "command=${request.command.command}"
+                            )
+                        }
+
+                        is CarCommandDispatchResult.Rejected -> {
+                            activeRequest =
+                                null
+
+                            transportStatusForCurrentRequest =
+                                null
+
+                            rejectionReason =
+                                dispatchRejectionText(
+                                    dispatchResult.reason
+                                )
+
+                            requestState =
+                                VoiceRequestState.REJECTED
+
+                            Log.i(
+                                TAG,
+                                "Voice request rejected by dispatcher"
+                            )
+                        }
+
+                        is CarCommandDispatchResult.Failed -> {
+                            activeRequest =
+                                null
+
+                            transportStatusForCurrentRequest =
+                                null
+
+                            failureMessage =
+                                dispatchResult.message
+
+                            requestState =
+                                VoiceRequestState.FAILED
+
+                            Log.e(
+                                TAG,
+                                "Voice request dispatch failed"
+                            )
+                        }
+                    }
+                }
             )
         }
 
@@ -219,10 +316,16 @@ fun VoiceInputSection(
                 requestState =
                     VoiceRequestState.LISTENING
 
-                waitingForFreshTransportEvent =
-                    false
+                activeRequest =
+                    null
 
                 transportStatusForCurrentRequest =
+                    null
+
+                rejectionReason =
+                    null
+
+                failureMessage =
                     null
 
                 val recognitionIntent =
@@ -278,7 +381,12 @@ fun VoiceInputSection(
         Text(
             text =
                 voiceRequestStatusText(
-                    requestState
+                    requestState =
+                        requestState,
+                    rejectionReason =
+                        rejectionReason,
+                    failureMessage =
+                        failureMessage
                 ),
             style =
                 MaterialTheme.typography.bodyMedium
@@ -296,6 +404,8 @@ fun VoiceInputSection(
                 voiceTransportStatusText(
                     requestState =
                         requestState,
+                    request =
+                        activeRequest,
                     transportStatus =
                         transportStatusForCurrentRequest
                 ),
@@ -305,8 +415,76 @@ fun VoiceInputSection(
     }
 }
 
+private fun eventMatchesRequest(
+    event: CarStatusEvent,
+    request: CarCommandRequest
+): Boolean {
+    return when (event) {
+        is CarStatusEvent.CommandSent -> {
+            event.requestId ==
+                request.requestId &&
+                event.command ==
+                request.command
+        }
+
+        is CarStatusEvent.CommandResponse -> {
+            event.requestId ==
+                request.requestId &&
+                event.command ==
+                request.command
+        }
+
+        is CarStatusEvent.Error -> {
+            event.requestId ==
+                request.requestId &&
+                event.command ==
+                request.command
+        }
+
+        is CarStatusEvent.Connected -> {
+            false
+        }
+
+        is CarStatusEvent.Disconnected -> {
+            false
+        }
+    }
+}
+
+private fun dispatchRejectionText(
+    reason: String
+): String {
+    return when (reason) {
+        "empty_request" -> {
+            "empty request"
+        }
+
+        "unknown_command" -> {
+            "not a supported Phase 1 command"
+        }
+
+        "negated_command" -> {
+            "negated command was not transmitted"
+        }
+
+        "out_of_scope_command" -> {
+            "command is outside the Phase 1 safety scope"
+        }
+
+        "invalid_canonical_command" -> {
+            "command failed safety validation"
+        }
+
+        else -> {
+            "request was rejected"
+        }
+    }
+}
+
 private fun voiceRequestStatusText(
-    requestState: VoiceRequestState
+    requestState: VoiceRequestState,
+    rejectionReason: String?,
+    failureMessage: String?
 ): String {
     return when (requestState) {
         VoiceRequestState.READY -> {
@@ -325,68 +503,82 @@ private fun voiceRequestStatusText(
             "No speech detected"
         }
 
+        VoiceRequestState.DISPATCHING -> {
+            "Validating and transmitting request"
+        }
+
         VoiceRequestState.REJECTED -> {
-            "Request rejected: not a supported Phase 1 command"
+            "Request rejected: " +
+                (
+                    rejectionReason
+                        ?: "request was not approved"
+                )
         }
 
         VoiceRequestState.SUBMITTED -> {
             "Request submitted"
+        }
+
+        VoiceRequestState.FAILED -> {
+            "Request failed: " +
+                (
+                    failureMessage
+                        ?: "transport failure"
+                )
         }
     }
 }
 
 private fun voiceTransportStatusText(
     requestState: VoiceRequestState,
+    request: CarCommandRequest?,
     transportStatus: CarStatusEvent?
 ): String {
-    if (
-        requestState == VoiceRequestState.REJECTED
-    ) {
-        return "Transport: No command transmitted"
+    when (requestState) {
+        VoiceRequestState.READY -> {
+            return "Transport: No voice request submitted"
+        }
+
+        VoiceRequestState.LISTENING -> {
+            return "Transport: Waiting for voice request"
+        }
+
+        VoiceRequestState.CANCELLED,
+        VoiceRequestState.NO_SPEECH -> {
+            return "Transport: No command submitted"
+        }
+
+        VoiceRequestState.DISPATCHING -> {
+            return "Transport: Preparing command request"
+        }
+
+        VoiceRequestState.REJECTED -> {
+            return "Transport: No command transmitted"
+        }
+
+        VoiceRequestState.FAILED -> {
+            return "Transport: Command was not transmitted"
+        }
+
+        VoiceRequestState.SUBMITTED -> {
+            // Continue to request-specific transport rendering below.
+        }
     }
 
-    if (
-        requestState == VoiceRequestState.CANCELLED ||
-        requestState == VoiceRequestState.NO_SPEECH
-    ) {
-        return "Transport: No command submitted"
-    }
-
-    if (
-        requestState == VoiceRequestState.LISTENING
-    ) {
-        return "Transport: Waiting for voice request"
-    }
-
-    if (
-        requestState == VoiceRequestState.READY
-    ) {
-        return "Transport: No voice request submitted"
+    if (request == null) {
+        return "Transport: Waiting for request identity"
     }
 
     return when (transportStatus) {
         null -> {
-            "Transport: Waiting for command status"
-        }
-
-        is CarStatusEvent.Connected -> {
-            "Transport: Connected to " +
-                transportStatus.transportName
-        }
-
-        is CarStatusEvent.Disconnected -> {
-            "Transport: Disconnected from " +
-                transportStatus.transportName
-        }
-
-        is CarStatusEvent.Error -> {
-            "Transport: Failed: " +
-                transportStatus.message
+            "Transport: Waiting for command status " +
+                "(id=${request.requestId})"
         }
 
         is CarStatusEvent.CommandSent -> {
             "Transport: Request sent to BabyNodeCAN: " +
-                transportStatus.command.command
+                transportStatus.command.command +
+                " (id=${transportStatus.requestId})"
         }
 
         is CarStatusEvent.CommandResponse -> {
@@ -397,12 +589,28 @@ private fun voiceTransportStatusText(
                 )
             ) {
                 "BabyNodeCAN: Request accepted " +
-                    "(id=${transportStatus.commandId})"
+                    "(id=${transportStatus.requestId})"
             } else {
                 "BabyNodeCAN: Response " +
                     transportStatus.status +
-                    " (id=${transportStatus.commandId})"
+                    " (id=${transportStatus.requestId})"
             }
+        }
+
+        is CarStatusEvent.Error -> {
+            "Transport: Failed: " +
+                transportStatus.message +
+                " (id=${request.requestId})"
+        }
+
+        is CarStatusEvent.Connected,
+        is CarStatusEvent.Disconnected -> {
+            /*
+             * Connection events are intentionally excluded from
+             * request-correlated voice status.
+             */
+            "Transport: Waiting for command status " +
+                "(id=${request.requestId})"
         }
     }
 }
