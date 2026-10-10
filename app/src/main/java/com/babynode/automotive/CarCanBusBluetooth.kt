@@ -501,6 +501,11 @@ class CarCanBusBluetooth : CarCanTransport {
                 )
 
                 put(
+                    "version",
+                    1
+                )
+
+                put(
                     "type",
                     "command"
                 )
