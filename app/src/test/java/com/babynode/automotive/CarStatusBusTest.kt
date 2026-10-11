@@ -90,4 +90,152 @@ class CarStatusBusTest {
         )
     }
 
+
+    @Test
+    fun findsResponseThatArrivedBeforeUiRegisteredRequest() {
+        val bus =
+            CarStatusBus()
+
+        val request =
+            CarCommandRequest(
+                requestId =
+                    42L,
+                command =
+                    CanonicalCommand(
+                        command =
+                            "LOCK_DOORS"
+                    )
+            )
+
+        val response =
+            CarStatusEvent.CommandResponse(
+                requestId =
+                    request.requestId,
+                command =
+                    request.command,
+                status =
+                    "ok"
+            )
+
+        bus.accept(
+            response
+        )
+
+        assertEquals(
+            response,
+            bus.latestEventFor(
+                request
+            )
+        )
+    }
+
+
+    @Test
+    fun unrelatedNewerEventsDoNotHideRequestResponse() {
+        val bus =
+            CarStatusBus()
+
+        val request =
+            CarCommandRequest(
+                requestId =
+                    42L,
+                command =
+                    CanonicalCommand(
+                        command =
+                            "LOCK_DOORS"
+                    )
+            )
+
+        val matchingResponse =
+            CarStatusEvent.CommandResponse(
+                requestId =
+                    request.requestId,
+                command =
+                    request.command,
+                status =
+                    "ok"
+            )
+
+        bus.accept(
+            matchingResponse
+        )
+
+        bus.accept(
+            CarStatusEvent.CommandResponse(
+                requestId =
+                    99L,
+                command =
+                    CanonicalCommand(
+                        command =
+                            "HEADLIGHTS_ON"
+                    ),
+                status =
+                    "ok"
+            )
+        )
+
+        bus.accept(
+            CarStatusEvent.Connected(
+                transportName =
+                    "Bluetooth"
+            )
+        )
+
+        assertEquals(
+            matchingResponse,
+            bus.latestEventFor(
+                request
+            )
+        )
+    }
+
+
+    @Test
+    fun transportReplacementPreventsRequestIdReuseCollision() {
+        val bus =
+            CarStatusBus()
+
+        val oldRequest =
+            CarCommandRequest(
+                requestId =
+                    1L,
+                command =
+                    CanonicalCommand(
+                        command =
+                            "LOCK_DOORS"
+                    )
+            )
+
+        bus.accept(
+            CarStatusEvent.CommandResponse(
+                requestId =
+                    oldRequest.requestId,
+                command =
+                    oldRequest.command,
+                status =
+                    "ok"
+            )
+        )
+
+        bus.resetForTransportReplacement()
+
+        val newRequest =
+            CarCommandRequest(
+                requestId =
+                    1L,
+                command =
+                    CanonicalCommand(
+                        command =
+                            "LOCK_DOORS"
+                    )
+            )
+
+        assertEquals(
+            null,
+            bus.latestEventFor(
+                newRequest
+            )
+        )
+    }
+
 }

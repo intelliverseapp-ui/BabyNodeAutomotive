@@ -138,7 +138,8 @@ fun AutomotiveScreen(
         Log.i(TAG, "Render VoiceInputSection(): latestEvent=$status")
         VoiceInputSection(
             dispatcher = dispatcher,
-            status = status
+            status = status,
+            eventHistory = eventHistory
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -149,7 +150,8 @@ fun AutomotiveScreen(
         Log.i(TAG, "Render CommandTestSection(): latestEvent=$status")
         CommandTestSection(
             dispatcher = dispatcher,
-            status = status
+            status = status,
+            eventHistory = eventHistory
         )
 
         Spacer(modifier = Modifier.height(24.dp))

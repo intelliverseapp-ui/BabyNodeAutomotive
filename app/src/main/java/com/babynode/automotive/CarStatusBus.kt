@@ -135,6 +135,50 @@ class CarStatusBus {
     }
 
     /**
+     * Returns the newest event matching the exact request identity
+     * and canonical command.
+     *
+     * This allows the UI to recover an event that arrived before it
+     * registered the request returned by the dispatcher.
+     */
+    fun latestEventFor(
+        request: CarCommandRequest
+    ): CarStatusEvent? {
+        return _events
+            .value
+            .asReversed()
+            .firstOrNull { event ->
+                when (event) {
+                    is CarStatusEvent.CommandSent -> {
+                        event.requestId ==
+                            request.requestId &&
+                            event.command ==
+                            request.command
+                    }
+
+                    is CarStatusEvent.CommandResponse -> {
+                        event.requestId ==
+                            request.requestId &&
+                            event.command ==
+                            request.command
+                    }
+
+                    is CarStatusEvent.Error -> {
+                        event.requestId ==
+                            request.requestId &&
+                            event.command ==
+                            request.command
+                    }
+
+                    is CarStatusEvent.Connected,
+                    is CarStatusEvent.Disconnected -> {
+                        false
+                    }
+                }
+            }
+    }
+
+    /**
      * Resets all observable status when the active transport is
      * permanently replaced.
      */

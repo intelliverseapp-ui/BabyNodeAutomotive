@@ -1,5 +1,6 @@
 package com.babynode.automotive.ui
 
+import kotlinx.coroutines.delay
 import android.util.Log
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -32,13 +33,15 @@ private enum class TypedRequestState {
     DISPATCHING,
     REJECTED,
     SUBMITTED,
+    TIMED_OUT,
     FAILED
 }
 
 @Composable
 fun CommandTestSection(
     dispatcher: CarCommandDispatcher,
-    status: CarStatusEvent?
+    status: CarStatusEvent?,
+    eventHistory: List<CarStatusEvent>
 ) {
     var commandText by remember {
         mutableStateOf("")
@@ -85,26 +88,48 @@ fun CommandTestSection(
      */
     LaunchedEffect(
         status,
+        eventHistory,
         activeRequest
     ) {
         val currentRequest =
             activeRequest
 
-        val currentStatus =
-            status
+        if (currentRequest != null) {
+            transportStatusForCurrentRequest =
+                eventHistory
+                    .asReversed()
+                    .firstOrNull { event ->
+                        eventMatchesTypedRequest(
+                            event =
+                                event,
+                            request =
+                                currentRequest
+                        )
+                    }
+        }
+    }
+
+    LaunchedEffect(
+        activeRequest
+    ) {
+        val requestAtStart =
+            activeRequest
+                ?: return@LaunchedEffect
+
+        delay(
+            5_000L
+        )
 
         if (
-            currentRequest != null &&
-            currentStatus != null &&
-            eventMatchesTypedRequest(
-                event =
-                    currentStatus,
-                request =
-                    currentRequest
-            )
+            activeRequest ==
+            requestAtStart &&
+            transportStatusForCurrentRequest
+                !is CarStatusEvent.CommandResponse &&
+            transportStatusForCurrentRequest
+                !is CarStatusEvent.Error
         ) {
-            transportStatusForCurrentRequest =
-                currentStatus
+            requestState =
+                TypedRequestState.TIMED_OUT
         }
     }
 
@@ -488,6 +513,10 @@ private fun typedRequestStatusText(
             "Request submitted"
         }
 
+        TypedRequestState.TIMED_OUT -> {
+            "Request outcome unknown after response timeout"
+        }
+
         TypedRequestState.FAILED -> {
             "Request failed: " +
                 (
@@ -519,6 +548,10 @@ private fun typedTransportStatusText(
 
         TypedRequestState.FAILED -> {
             return "Transport: Command was not transmitted"
+        }
+
+        TypedRequestState.TIMED_OUT -> {
+            return "Transport: Response timeout; outcome unknown"
         }
 
         TypedRequestState.SUBMITTED -> {

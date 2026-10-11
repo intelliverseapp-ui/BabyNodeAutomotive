@@ -1,5 +1,6 @@
 package com.babynode.automotive.ui
 
+import kotlinx.coroutines.delay
 import android.app.Activity
 import android.content.Intent
 import android.speech.RecognizerIntent
@@ -38,13 +39,15 @@ private enum class VoiceRequestState {
     DISPATCHING,
     REJECTED,
     SUBMITTED,
+    TIMED_OUT,
     FAILED
 }
 
 @Composable
 fun VoiceInputSection(
     dispatcher: CarCommandDispatcher,
-    status: CarStatusEvent?
+    status: CarStatusEvent?,
+    eventHistory: List<CarStatusEvent>
 ) {
     var recognizedText by remember {
         mutableStateOf("")
@@ -90,26 +93,48 @@ fun VoiceInputSection(
      */
     LaunchedEffect(
         status,
+        eventHistory,
         activeRequest
     ) {
         val currentRequest =
             activeRequest
 
-        val currentStatus =
-            status
+        if (currentRequest != null) {
+            transportStatusForCurrentRequest =
+                eventHistory
+                    .asReversed()
+                    .firstOrNull { event ->
+                        eventMatchesRequest(
+                            event =
+                                event,
+                            request =
+                                currentRequest
+                        )
+                    }
+        }
+    }
+
+    LaunchedEffect(
+        activeRequest
+    ) {
+        val requestAtStart =
+            activeRequest
+                ?: return@LaunchedEffect
+
+        delay(
+            5_000L
+        )
 
         if (
-            currentRequest != null &&
-            currentStatus != null &&
-            eventMatchesRequest(
-                event =
-                    currentStatus,
-                request =
-                    currentRequest
-            )
+            activeRequest ==
+            requestAtStart &&
+            transportStatusForCurrentRequest
+                !is CarStatusEvent.CommandResponse &&
+            transportStatusForCurrentRequest
+                !is CarStatusEvent.Error
         ) {
-            transportStatusForCurrentRequest =
-                currentStatus
+            requestState =
+                VoiceRequestState.TIMED_OUT
         }
     }
 
@@ -523,6 +548,10 @@ private fun voiceRequestStatusText(
             "Request submitted"
         }
 
+        VoiceRequestState.TIMED_OUT -> {
+            "Request outcome unknown after response timeout"
+        }
+
         VoiceRequestState.FAILED -> {
             "Request failed: " +
                 (
@@ -562,6 +591,10 @@ private fun voiceTransportStatusText(
 
         VoiceRequestState.FAILED -> {
             return "Transport: Command was not transmitted"
+        }
+
+        VoiceRequestState.TIMED_OUT -> {
+            return "Transport: Response timeout; outcome unknown"
         }
 
         VoiceRequestState.SUBMITTED -> {
