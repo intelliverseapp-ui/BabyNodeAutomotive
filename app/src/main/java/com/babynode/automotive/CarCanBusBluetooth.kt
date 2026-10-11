@@ -531,6 +531,9 @@ class CarCanBusBluetooth : CarCanTransport {
                     CompletableDeferred()
             )
 
+        var writeAttemptStarted =
+            false
+
         var writeCompleted =
             false
 
@@ -569,6 +572,9 @@ class CarCanBusBluetooth : CarCanTransport {
                     TAG,
                     "Sending command request id=$messageId"
                 )
+
+                writeAttemptStarted =
+                    true
 
                 withContext(Dispatchers.IO) {
                     activeOutputStream.write(
@@ -615,28 +621,64 @@ class CarCanBusBluetooth : CarCanTransport {
 
             return request
         } catch (e: CancellationException) {
-            pendingCommands.remove(
-                messageId,
+            if (writeAttemptStarted) {
+                /*
+                 * A blocking write or flush may have transferred
+                 * bytes before cancellation was observed. Preserve
+                 * request tracking so a response or timeout can still
+                 * resolve the possibly transmitted command.
+                 */
+                startResponseTimeout(
+                    messageId =
+                        messageId,
+                    pendingCommand =
+                        pendingCommand
+                )
+
+                transportScope.launch {
+                    emitRequestError(
+                        request =
+                            request,
+                        message =
+                            "Command send cancelled after write " +
+                                "started: outcome unknown",
+                        throwable =
+                            e
+                    )
+                }
+
+                Log.w(
+                    TAG,
+                    "Command cancellation outcome unknown: " +
+                        "id=$messageId"
+                )
+            } else {
+                pendingCommands.remove(
+                    messageId,
+                    pendingCommand
+                )
+
                 pendingCommand
-            )
+                    .responseReceived
+                    .cancel()
 
-            pendingCommand
-                .responseReceived
-                .cancel()
+                transportScope.launch {
+                    emitRequestError(
+                        request =
+                            request,
+                        message =
+                            "Command send cancelled before write",
+                        throwable =
+                            e
+                    )
+                }
 
-            emitRequestError(
-                request =
-                    request,
-                message =
-                    "Command send cancelled",
-                throwable =
-                    e
-            )
-
-            Log.i(
-                TAG,
-                "Command send cancelled: id=$messageId"
-            )
+                Log.i(
+                    TAG,
+                    "Command send cancelled before write: " +
+                        "id=$messageId"
+                )
+            }
 
             throw e
         } catch (e: Exception) {
