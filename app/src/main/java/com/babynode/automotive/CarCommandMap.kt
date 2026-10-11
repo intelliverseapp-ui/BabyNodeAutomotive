@@ -122,6 +122,10 @@ object CarCommandMap {
                 "do not"
             )
             .replace(
+                Regex("""\bcan['’]?t\b"""),
+                "can not"
+            )
+            .replace(
                 Regex("""\bcannot\b"""),
                 "can not"
             )
@@ -170,7 +174,11 @@ object CarCommandMap {
             it == "no" ||
                 it == "not" ||
                 it == "never" ||
-                it == "stop"
+                it == "stop" ||
+                it == "cancel" ||
+                it == "ignore" ||
+                it == "wait" ||
+                it == "undo"
         }
     }
 
@@ -225,6 +233,71 @@ object CarCommandMap {
             tokenize(
                 normalizedText
             )
+
+        if (tokens.size == 1) {
+            return UNKNOWN_COMMAND
+        }
+
+        val questionStarters =
+            setOf(
+                "can",
+                "could",
+                "would",
+                "is",
+                "are",
+                "was",
+                "were",
+                "did",
+                "does",
+                "has",
+                "have",
+                "what",
+                "when",
+                "where",
+                "who",
+                "why",
+                "how"
+            )
+
+        val firstToken =
+            normalizedText
+                .substringBefore(" ")
+
+        if (firstToken in questionStarters) {
+            return UNKNOWN_COMMAND
+        }
+
+        if (
+            "and" in tokens ||
+            "then" in tokens ||
+            "also" in tokens
+        ) {
+            return UNKNOWN_COMMAND
+        }
+
+        val majorActionCount =
+            listOf(
+                "lock",
+                "unlock",
+                "open"
+            ).count {
+                it in tokens
+            }
+
+        if (majorActionCount > 1) {
+            return UNKNOWN_COMMAND
+        }
+
+        if (
+            (
+                "lock" in tokens ||
+                "unlock" in tokens
+            ) &&
+            "door" !in tokens &&
+            "doors" !in tokens
+        ) {
+            return UNKNOWN_COMMAND
+        }
 
         if (
             containsNegation(
