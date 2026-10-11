@@ -74,6 +74,48 @@ class BabyNodeApp : Application() {
     }
 
     /**
+     * Returns the previously selected BabyNodeCAN module type.
+     *
+     * Returns null when no module selection has been stored.
+     */
+    fun selectedModuleName():
+        String? {
+        return preferences
+            .getString(
+                KEY_SELECTED_MODULE,
+                null
+            )
+            ?.trim()
+            ?.takeIf {
+                it.isNotBlank()
+            }
+    }
+
+    /**
+     * Persists the selected BabyNodeCAN module type.
+     */
+    fun saveSelectedModuleName(
+        moduleName: String
+    ): Boolean {
+        val normalizedName =
+            moduleName.trim()
+
+        if (normalizedName.isBlank()) {
+            return false
+        }
+
+        preferences
+            .edit()
+            .putString(
+                KEY_SELECTED_MODULE,
+                normalizedName
+            )
+            .apply()
+
+        return true
+    }
+
+    /**
      * Clears the stored BabyNodeCAN identity.
      *
      * This can later support an explicit user-facing action such as
@@ -101,6 +143,9 @@ class BabyNodeApp : Application() {
 
         private const val KEY_APPROVED_BABYNODECAN_ADDRESS =
             "approved_babynodecan_bluetooth_address"
+
+        private const val KEY_SELECTED_MODULE =
+            "selected_babynodecan_module"
 
         private val BLUETOOTH_ADDRESS_PATTERN =
             Regex(

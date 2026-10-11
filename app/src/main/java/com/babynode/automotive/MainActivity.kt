@@ -302,12 +302,21 @@ class MainActivity : ComponentActivity() {
                     STATE_SELECTED_MODULE
                 )
 
+        val persistedModuleName =
+            BabyNodeApp
+                .instance
+                .selectedModuleName()
+
+        val moduleName =
+            savedModuleName
+                ?: persistedModuleName
+
         return runCatching {
-            if (savedModuleName == null) {
+            if (moduleName == null) {
                 ModuleType.SINGLE_CAN
             } else {
                 ModuleType.valueOf(
-                    savedModuleName
+                    moduleName
                 )
             }
         }.getOrDefault(
@@ -354,6 +363,12 @@ class MainActivity : ComponentActivity() {
 
         selectedModule =
             module
+
+        BabyNodeApp
+            .instance
+            .saveSelectedModuleName(
+                module.name
+            )
 
         onDispatcherReplaced(
             dispatcher
