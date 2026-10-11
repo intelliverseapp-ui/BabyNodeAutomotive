@@ -1281,9 +1281,29 @@ class CarCanBusBluetooth : CarCanTransport {
                 )
 
             if (removed) {
+                val request =
+                    entry.value.request
+
                 entry.value
                     .responseReceived
                     .cancel()
+
+                Log.w(
+                    TAG,
+                    "Pending command closed with unknown outcome: " +
+                        "id=${request.requestId}"
+                )
+
+                statusFlow.tryEmit(
+                    CarStatusEvent.Error(
+                        message =
+                            "Transport closed: outcome unknown",
+                        requestId =
+                            request.requestId,
+                        command =
+                            request.command
+                    )
+                )
             }
         }
     }

@@ -135,6 +135,21 @@ class CarStatusBus {
     }
 
     /**
+     * Resets all observable status when the active transport is
+     * permanently replaced.
+     */
+    fun resetForTransportReplacement() {
+        _connectionState.value =
+            CarConnectionState.Disconnected
+
+        _latestEvent.value =
+            null
+
+        _events.value =
+            emptyList()
+    }
+
+    /**
      * Clears event history without changing the current connection
      * state. This can be connected to a future UI control if needed.
      */

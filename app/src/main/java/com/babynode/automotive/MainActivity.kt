@@ -347,6 +347,8 @@ class MainActivity : ComponentActivity() {
         transportEventsJob =
             null
 
+        statusBus.resetForTransportReplacement()
+
         transport.close()
 
         val newTransport =
