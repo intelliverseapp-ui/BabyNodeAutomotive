@@ -149,4 +149,42 @@ class CarCommandMapTest {
         }
     }
 
+    @Test
+    fun phaseOnePolicyRejectsNonAllowlistedCanonicalCommands() {
+        val rejectedCommands = listOf(
+            "ENGINE_START",
+            "RAW_CAN_SEND",
+            "CRUISE_CONTROL_ON",
+            "config.module",
+            "UNKNOWN_VALID_NAME"
+        )
+
+        rejectedCommands.forEach { command ->
+            assertEquals(
+                command,
+                false,
+                CarCommandMap.isPhaseOneCommand(command)
+            )
+        }
+    }
+
+    @Test
+    fun phaseOnePolicyAcceptsApprovedCanonicalCommands() {
+        val approvedCommands = listOf(
+            "LOCK_DOORS",
+            "UNLOCK_DOORS",
+            "TRUNK_OPEN",
+            "HEADLIGHTS_ON",
+            "AC_ON"
+        )
+
+        approvedCommands.forEach { command ->
+            assertEquals(
+                command,
+                true,
+                CarCommandMap.isPhaseOneCommand(command)
+            )
+        }
+    }
+
 }

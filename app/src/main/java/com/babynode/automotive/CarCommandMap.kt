@@ -849,6 +849,15 @@ object CarCommandMap {
     }
 
     // ============================================================
+    // SHARED PHASE 1 POLICY
+    // ============================================================
+    fun isPhaseOneCommand(
+        command: String
+    ): Boolean {
+        return command in phaseOneAllowlist
+    }
+
+    // ============================================================
     // FINAL PHASE 1 SAFETY GATE
     // ============================================================
     private fun allowPhaseOneCommand(
@@ -858,7 +867,7 @@ object CarCommandMap {
             return UNKNOWN_COMMAND
         }
 
-        if (candidate !in phaseOneAllowlist) {
+        if (!isPhaseOneCommand(candidate)) {
             return BLOCKED_OUT_OF_SCOPE_COMMAND
         }
 

@@ -395,6 +395,14 @@ class CarCommandDispatcher(
             return false
         }
 
+        if (
+            !CarCommandMap.isPhaseOneCommand(
+                command
+            )
+        ) {
+            return false
+        }
+
         return CANONICAL_COMMAND_PATTERN.matches(
             command
         )
