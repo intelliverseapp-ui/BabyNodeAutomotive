@@ -788,6 +788,10 @@ class MainActivity : ComponentActivity() {
                             return@collect
                         }
 
+                        dispatcher.acceptTransportEvent(
+                            event
+                        )
+
                         statusBus.accept(
                             event
                         )
@@ -803,7 +807,24 @@ class MainActivity : ComponentActivity() {
                                 )
 
                                 dispatcher.sendModuleConfig(
-                                    selectedModule.jsonId
+                                    moduleJsonId =
+                                        selectedModule.jsonId,
+                                    onResult = { result ->
+                                        if (
+                                            result is
+                                            CarCommandDispatchResult.Submitted
+                                        ) {
+                                            statusBus
+                                                .latestEvent
+                                                .value
+                                                ?.let { latestEvent ->
+                                                    dispatcher
+                                                        .acceptTransportEvent(
+                                                            latestEvent
+                                                        )
+                                                }
+                                        }
+                                    }
                                 )
                             }
 

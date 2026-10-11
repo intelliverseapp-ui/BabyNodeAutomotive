@@ -475,6 +475,10 @@ private fun dispatchRejectionText(
             "command failed safety validation"
         }
 
+        "module_not_configured" -> {
+            "vehicle module configuration is not ready"
+        }
+
         else -> {
             "request was rejected"
         }

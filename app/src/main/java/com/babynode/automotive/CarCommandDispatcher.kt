@@ -50,6 +50,14 @@ class CarCommandDispatcher(
     private val transport: CarCanTransport
 ) {
 
+    @Volatile
+    private var pendingModuleConfigRequest:
+        CarCommandRequest? = null
+
+    @Volatile
+    private var moduleConfigurationReady =
+        false
+
     companion object {
         private const val TAG =
             "CarCommandDispatcher"
@@ -72,6 +80,9 @@ class CarCommandDispatcher(
         private const val REJECTION_INVALID_CANONICAL =
             "invalid_canonical_command"
 
+        private const val REJECTION_MODULE_NOT_CONFIGURED =
+            "module_not_configured"
+
         private val CANONICAL_COMMAND_PATTERN =
             Regex(
                 pattern =
@@ -87,8 +98,16 @@ class CarCommandDispatcher(
      * so its response cannot be treated as a user-command result.
      */
     fun sendModuleConfig(
-        moduleJsonId: String
+        moduleJsonId: String,
+        onResult:
+            (CarCommandDispatchResult) -> Unit = {}
     ) {
+        moduleConfigurationReady =
+            false
+
+        pendingModuleConfigRequest =
+            null
+
         val normalizedModuleId =
             moduleJsonId
                 .trim()
@@ -101,6 +120,13 @@ class CarCommandDispatcher(
             Log.e(
                 TAG,
                 "Invalid module configuration rejected"
+            )
+
+            onResult(
+                CarCommandDispatchResult.Rejected(
+                    reason =
+                        "invalid_module_configuration"
+                )
             )
 
             return
@@ -123,6 +149,16 @@ class CarCommandDispatcher(
                     "Module configuration request submitted: " +
                         "id=${request.requestId}"
                 )
+
+                pendingModuleConfigRequest =
+                    request
+
+                onResult(
+                    CarCommandDispatchResult.Submitted(
+                        request =
+                            request
+                    )
+                )
             } catch (e: CancellationException) {
                 Log.i(
                     TAG,
@@ -131,11 +167,91 @@ class CarCommandDispatcher(
 
                 throw e
             } catch (e: Exception) {
+                val message =
+                    "Module configuration request failed: " +
+                        (
+                            e.message
+                                ?: e.javaClass.simpleName
+                        )
+
                 Log.e(
                     TAG,
-                    "Module configuration request failed",
+                    message,
                     e
                 )
+
+                onResult(
+                    CarCommandDispatchResult.Failed(
+                        message =
+                            message
+                    )
+                )
+            }
+        }
+    }
+
+    /**
+     * Accepts transport events used to validate the current
+     * module-configuration request.
+     */
+    fun acceptTransportEvent(
+        event: CarStatusEvent
+    ) {
+        if (event is CarStatusEvent.Disconnected) {
+            moduleConfigurationReady =
+                false
+
+            pendingModuleConfigRequest =
+                null
+
+            return
+        }
+
+        val pendingRequest =
+            pendingModuleConfigRequest
+                ?: return
+
+        when (event) {
+            is CarStatusEvent.CommandResponse -> {
+                if (
+                    event.requestId ==
+                    pendingRequest.requestId &&
+                    event.command ==
+                    pendingRequest.command
+                ) {
+                    moduleConfigurationReady =
+                        event.status.equals(
+                            "ok",
+                            ignoreCase = true
+                        )
+
+                    pendingModuleConfigRequest =
+                        null
+                }
+            }
+
+            is CarStatusEvent.Error -> {
+                if (
+                    event.requestId ==
+                    pendingRequest.requestId &&
+                    event.command ==
+                    pendingRequest.command
+                ) {
+                    moduleConfigurationReady =
+                        false
+
+                    pendingModuleConfigRequest =
+                        null
+                }
+            }
+
+            is CarStatusEvent.Disconnected -> {
+                // Handled before pending-request lookup.
+            }
+
+            is CarStatusEvent.Connected,
+            is CarStatusEvent.CommandSent -> {
+                // No configuration-state transition.
             }
         }
     }
@@ -171,6 +287,23 @@ class CarCommandDispatcher(
                 CarCommandDispatchResult.Rejected(
                     reason =
                         REJECTION_EMPTY
+                )
+            )
+
+            return
+        }
+
+        if (!moduleConfigurationReady) {
+            Log.w(
+                TAG,
+                "Vehicle command rejected because module " +
+                    "configuration is not acknowledged"
+            )
+
+            onResult(
+                CarCommandDispatchResult.Rejected(
+                    reason =
+                        REJECTION_MODULE_NOT_CONFIGURED
                 )
             )
 
