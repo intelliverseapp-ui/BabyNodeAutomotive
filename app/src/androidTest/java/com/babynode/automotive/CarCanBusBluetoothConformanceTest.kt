@@ -2,6 +2,7 @@ package com.babynode.automotive
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.OutputStream
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
@@ -1145,6 +1146,268 @@ class CarCanBusBluetoothConformanceTest {
                 transport.close()
             }
         }
+
+
+    @Test
+    fun flushFailureAfterWriteReportsOutcomeUnknownExactlyOnce() =
+        runBlocking {
+            val connection =
+                FlushFailureConnection()
+
+            val transport =
+                CarCanBusBluetooth()
+
+            val observedEvents =
+                Collections.synchronizedList(
+                    mutableListOf<CarStatusEvent>()
+                )
+
+            val collector =
+                launch(
+                    start =
+                        CoroutineStart.UNDISPATCHED
+                ) {
+                    transport
+                        .status()
+                        .collect { event ->
+                            observedEvents +=
+                                event
+                        }
+                }
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection
+                )
+
+                val exception =
+                    runCatching {
+                        transport.sendCommand(
+                            CanonicalCommand(
+                                command =
+                                    "LOCK_DOORS"
+                            )
+                        )
+                    }
+                        .exceptionOrNull()
+
+                assertTrue(
+                    exception is
+                        CarCommandOutcomeUnknownException
+                )
+
+                val outcomeUnknownException =
+                    exception as
+                        CarCommandOutcomeUnknownException
+
+                val request =
+                    outcomeUnknownException.request
+
+                assertTrue(
+                    outcomeUnknownException.message
+                        .orEmpty()
+                        .contains(
+                            "outcome unknown",
+                            ignoreCase =
+                                true
+                        )
+                )
+
+                withTimeout(
+                    5_000L
+                ) {
+                    while (
+                        observedEvents.none { event ->
+                            event is
+                                CarStatusEvent.Error &&
+                                CarRequestEventMatcher.matches(
+                                    event =
+                                        event,
+                                    request =
+                                        request
+                                )
+                        } ||
+                        observedEvents.none { event ->
+                            event is
+                                CarStatusEvent.Disconnected
+                        }
+                    ) {
+                        delay(
+                            10L
+                        )
+                    }
+                }
+
+                delay(
+                    250L
+                )
+
+                val matchingErrors =
+                    observedEvents
+                        .filterIsInstance<
+                            CarStatusEvent.Error
+                        >()
+                        .filter { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+
+                assertEquals(
+                    1,
+                    matchingErrors.size
+                )
+
+                val terminalError =
+                    matchingErrors.single()
+
+                assertTrue(
+                    terminalError.message.contains(
+                        "outcome unknown",
+                        ignoreCase =
+                            true
+                    )
+                )
+
+                assertEquals(
+                    request.sessionGeneration,
+                    terminalError.sessionGeneration
+                )
+
+                assertEquals(
+                    request.requestId,
+                    terminalError.requestId
+                )
+
+                assertEquals(
+                    request.command,
+                    terminalError.command
+                )
+
+                assertFalse(
+                    observedEvents.any { event ->
+                        event is
+                            CarStatusEvent.CommandSent &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+                )
+
+                assertEquals(
+                    1,
+                    observedEvents.count { event ->
+                        event is
+                            CarStatusEvent.Disconnected
+                    }
+                )
+
+                assertFalse(
+                    connection.isConnected
+                )
+
+                assertFalse(
+                    transport
+                        .close()
+                        .any { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+                )
+            } finally {
+                collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
+
+    private class FlushFailureConnection :
+        RfcommConnection {
+
+        override var isConnected =
+            false
+            private set
+
+        private val peerWriter =
+            PipedOutputStream()
+
+        override val inputStream =
+            PipedInputStream(
+                peerWriter
+            )
+
+        private val writtenBytes =
+            ByteArrayOutputStream()
+
+        override val outputStream:
+            OutputStream =
+            object : OutputStream() {
+
+                override fun write(
+                    value: Int
+                ) {
+                    writtenBytes.write(
+                        value
+                    )
+                }
+
+                override fun write(
+                    bytes: ByteArray,
+                    offset: Int,
+                    length: Int
+                ) {
+                    writtenBytes.write(
+                        bytes,
+                        offset,
+                        length
+                    )
+                }
+
+                override fun flush() {
+                    assertTrue(
+                        writtenBytes.size() >
+                            0
+                    )
+
+                    throw IOException(
+                        "Simulated flush failure"
+                    )
+                }
+            }
+
+        override fun connect() {
+            isConnected =
+                true
+        }
+
+        override fun close() {
+            isConnected =
+                false
+
+            runCatching {
+                peerWriter.close()
+            }
+
+            runCatching {
+                inputStream.close()
+            }
+
+            runCatching {
+                writtenBytes.close()
+            }
+        }
+    }
 
     private class FlushTriggeredResponseConnection(
         private val responseCommand:
