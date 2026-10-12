@@ -33,7 +33,7 @@ class MainActivityExternalIntentTest {
         val transport =
             RecordingIntentTransport()
 
-        MainActivity.transportFactory = {
+        MainActivity.installTransportFactoryForTest {
             transport
         }
 

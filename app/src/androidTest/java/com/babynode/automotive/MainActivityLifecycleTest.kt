@@ -100,7 +100,7 @@ class MainActivityLifecycleTest {
                 )
             }
 
-        MainActivity.transportFactory = {
+        MainActivity.installTransportFactoryForTest {
             transports.removeFirst()
         }
 

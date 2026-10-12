@@ -48,7 +48,7 @@ class MainActivityRetryTest {
                     4
             )
 
-        MainActivity.transportFactory = {
+        MainActivity.installTransportFactoryForTest {
             transport
         }
 

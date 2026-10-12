@@ -45,15 +45,43 @@ class MainActivity : ComponentActivity() {
         private const val TAG =
             "BNA_MainActivity"
 
-        internal var transportFactory:
-            () -> CarCanTransport = {
-                CarCanBusBluetooth()
+        private var transportFactory:
+            (() -> CarCanTransport)? =
+            null
+
+        internal fun installTransportFactoryForTest(
+            factory: () -> CarCanTransport
+        ) {
+            check(
+                BuildConfig.DEBUG
+            ) {
+                "Transport factory test installation is unavailable in release builds"
             }
 
+            transportFactory =
+                factory
+        }
+
         internal fun resetTransportFactoryForTest() {
-            transportFactory = {
-                CarCanBusBluetooth()
+            check(
+                BuildConfig.DEBUG
+            ) {
+                "Transport factory reset is unavailable in release builds"
             }
+
+            transportFactory =
+                null
+        }
+
+        private fun createTransport(): CarCanTransport {
+            val factory =
+                if (BuildConfig.DEBUG) {
+                    transportFactory
+                } else {
+                    null
+                }
+
+            return factory?.invoke() ?: CarCanBusBluetooth()
         }
 
         private const val TRANSPORT_NAME =
@@ -302,7 +330,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         val initialTransport =
-            transportFactory()
+            createTransport()
 
         transport =
             initialTransport
@@ -726,7 +754,7 @@ class MainActivity : ComponentActivity() {
         )
 
         val newTransport =
-            transportFactory()
+            createTransport()
 
         transport =
             newTransport
