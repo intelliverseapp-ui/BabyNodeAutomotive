@@ -29,7 +29,10 @@ fun AutomotiveScreen(
     onModuleSelected: (ModuleType) -> Unit = {},
     onApproveDevice: (String) -> Unit = {},
     onForgetDevice: () -> Unit = {},
-    onRetryConnection: () -> Unit = {}
+    onRetryConnection: () -> Unit = {},
+    debugToolsVisible:
+        Boolean =
+        BuildConfig.DEBUG
 ) {
     Log.i(TAG, "Render AutomotiveScreen(): moduleType=${moduleType.uiLabel}")
 
@@ -261,7 +264,7 @@ fun AutomotiveScreen(
             )
         }
 
-        if (BuildConfig.DEBUG) {
+        if (debugToolsVisible) {
             Spacer(
                 modifier =
                     Modifier.height(
