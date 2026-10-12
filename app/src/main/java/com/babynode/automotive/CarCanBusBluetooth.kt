@@ -40,6 +40,9 @@ class CarCanBusBluetooth : CarCanTransport {
         private const val DEVICE_NAME =
             "BabyNodeCAN"
 
+        private const val PROTOCOL_HANDSHAKE_COMMAND =
+            "protocol.handshake"
+
         private const val RESPONSE_TIMEOUT_MILLIS =
             5_000L
 
@@ -1166,6 +1169,58 @@ class CarCanBusBluetooth : CarCanTransport {
                 }
 
                 return
+            }
+
+            if (
+                expectedCommand ==
+                    PROTOCOL_HANDSHAKE_COMMAND &&
+                responseStatus == "ok"
+            ) {
+                val capabilitiesValid =
+                    BabyNodeProtocol
+                        .validateHandshakeCapabilities(
+                            sessionId =
+                                json.opt(
+                                    "session_id"
+                                ),
+                            module =
+                                json.opt(
+                                    "module"
+                                ),
+                            canTransmit =
+                                json.opt(
+                                    "can_transmit"
+                                ),
+                            vehicleCommands =
+                                json.opt(
+                                    "vehicle_commands"
+                                )
+                        )
+
+                if (!capabilitiesValid) {
+                    val removed =
+                        pendingCommands.remove(
+                            commandId,
+                            pendingCommand
+                        )
+
+                    if (removed) {
+                        pendingCommand
+                            .responseReceived
+                            .complete(Unit)
+
+                        emitRequestError(
+                            request =
+                                request,
+                            message =
+                                "BabyNodeCAN handshake contains " +
+                                    "invalid session identity or " +
+                                    "unsupported capabilities"
+                        )
+                    }
+
+                    return
+                }
             }
 
             val removed =

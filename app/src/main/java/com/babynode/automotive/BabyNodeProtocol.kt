@@ -36,6 +36,43 @@ object BabyNodeProtocol {
             MIN_REQUEST_ID..MAX_REQUEST_ID
     }
 
+    const val MAX_SESSION_ID =
+        4_294_967_295L
+
+    fun validateHandshakeCapabilities(
+        sessionId: Any?,
+        module: Any?,
+        canTransmit: Any?,
+        vehicleCommands: Any?
+    ): Boolean {
+        val normalizedSessionId =
+            when (sessionId) {
+                is Byte ->
+                    sessionId.toLong()
+
+                is Short ->
+                    sessionId.toLong()
+
+                is Int ->
+                    sessionId.toLong()
+
+                is Long ->
+                    sessionId
+
+                else ->
+                    return false
+            }
+
+        return normalizedSessionId in
+            1L..MAX_SESSION_ID &&
+            module is String &&
+            module == "single" &&
+            canTransmit is Boolean &&
+            !canTransmit &&
+            vehicleCommands is String &&
+            vehicleCommands == "stub_only"
+    }
+
     fun validateVersion(
         version: Any?
     ): Boolean {

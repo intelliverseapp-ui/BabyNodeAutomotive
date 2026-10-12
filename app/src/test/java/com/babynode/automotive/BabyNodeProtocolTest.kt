@@ -106,4 +106,118 @@ class BabyNodeProtocolTest {
         )
     }
 
+
+    @Test
+    fun acceptsExpectedHandshakeCapabilities() {
+        assertTrue(
+            BabyNodeProtocol.validateHandshakeCapabilities(
+                sessionId =
+                    42L,
+                module =
+                    "single",
+                canTransmit =
+                    false,
+                vehicleCommands =
+                    "stub_only"
+            )
+        )
+    }
+
+    @Test
+    fun rejectsMissingHandshakeSessionIdentity() {
+        assertFalse(
+            BabyNodeProtocol.validateHandshakeCapabilities(
+                sessionId =
+                    null,
+                module =
+                    "single",
+                canTransmit =
+                    false,
+                vehicleCommands =
+                    "stub_only"
+            )
+        )
+    }
+
+    @Test
+    fun rejectsZeroHandshakeSessionIdentity() {
+        assertFalse(
+            BabyNodeProtocol.validateHandshakeCapabilities(
+                sessionId =
+                    0L,
+                module =
+                    "single",
+                canTransmit =
+                    false,
+                vehicleCommands =
+                    "stub_only"
+            )
+        )
+    }
+
+    @Test
+    fun rejectsOversizedHandshakeSessionIdentity() {
+        assertFalse(
+            BabyNodeProtocol.validateHandshakeCapabilities(
+                sessionId =
+                    BabyNodeProtocol.MAX_SESSION_ID +
+                        1L,
+                module =
+                    "single",
+                canTransmit =
+                    false,
+                vehicleCommands =
+                    "stub_only"
+            )
+        )
+    }
+
+    @Test
+    fun rejectsUnsupportedHandshakeModule() {
+        assertFalse(
+            BabyNodeProtocol.validateHandshakeCapabilities(
+                sessionId =
+                    42L,
+                module =
+                    "dual",
+                canTransmit =
+                    false,
+                vehicleCommands =
+                    "stub_only"
+            )
+        )
+    }
+
+    @Test
+    fun rejectsHandshakeClaimingCanTransmission() {
+        assertFalse(
+            BabyNodeProtocol.validateHandshakeCapabilities(
+                sessionId =
+                    42L,
+                module =
+                    "single",
+                canTransmit =
+                    true,
+                vehicleCommands =
+                    "stub_only"
+            )
+        )
+    }
+
+    @Test
+    fun rejectsUnsupportedVehicleCommandCapability() {
+        assertFalse(
+            BabyNodeProtocol.validateHandshakeCapabilities(
+                sessionId =
+                    42L,
+                module =
+                    "single",
+                canTransmit =
+                    false,
+                vehicleCommands =
+                    "implemented"
+            )
+        )
+    }
+
 }
