@@ -187,4 +187,60 @@ class CarCommandMapTest {
         }
     }
 
+
+    @Test
+    fun unmatchedWordsCannotHideActuatingCommands() {
+        val inputs = listOf(
+            "my phone says unlock the doors",
+            "open the trunk in the app",
+            "turn the headlights on after work",
+            "mute the television audio",
+            "spray paint near the washer"
+        )
+
+        inputs.forEach { input ->
+            assertEquals(
+                input,
+                CarCommandMap.UNKNOWN_COMMAND,
+                CarCommandMap.map(input)
+            )
+        }
+    }
+
+    @Test
+    fun additionalSafetyNegatorsBlockCommands() {
+        val inputs = listOf(
+            "unlock the doors without doing it",
+            "instead of unlocking the doors",
+            "do not open the trunk instead",
+            "cancel opening the trunk",
+            "wait before locking the doors"
+        )
+
+        inputs.forEach { input ->
+            assertEquals(
+                input,
+                CarCommandMap.IGNORED_NEGATED_COMMAND,
+                CarCommandMap.map(input)
+            )
+        }
+    }
+
+    @Test
+    fun embeddedQuestionsCannotBecomeCommands() {
+        val inputs = listOf(
+            "tell me whether to unlock the doors",
+            "I wonder if the trunk should open",
+            "please explain how to turn the headlights on"
+        )
+
+        inputs.forEach { input ->
+            assertEquals(
+                input,
+                CarCommandMap.UNKNOWN_COMMAND,
+                CarCommandMap.map(input)
+            )
+        }
+    }
+
 }
