@@ -493,7 +493,7 @@ class CarCanBusBluetooth : CarCanTransport {
 
                 put(
                     "version",
-                    1
+                    BabyNodeProtocol.VERSION
                 )
 
                 put(
@@ -999,15 +999,33 @@ class CarCanBusBluetooth : CarCanTransport {
                 return
             }
 
+            val versionValue =
+                json.opt(
+                    "version"
+                )
+
+            if (
+                !BabyNodeProtocol.validateVersion(
+                    versionValue
+                )
+            ) {
+                Log.w(
+                    TAG,
+                    "Response contains invalid protocol version"
+                )
+
+                return
+            }
+
             val idValue =
                 json.opt(
                     "id"
                 )
 
             if (
-                idValue !is Number ||
-                idValue.toDouble() < 0.0 ||
-                idValue.toDouble() % 1.0 != 0.0
+                !BabyNodeProtocol.validateRequestId(
+                    idValue
+                )
             ) {
                 Log.w(
                     TAG,
@@ -1018,7 +1036,8 @@ class CarCanBusBluetooth : CarCanTransport {
             }
 
             val commandId =
-                idValue.toLong()
+                (idValue as Number)
+                    .toLong()
 
             val commandValue =
                 json.opt(
