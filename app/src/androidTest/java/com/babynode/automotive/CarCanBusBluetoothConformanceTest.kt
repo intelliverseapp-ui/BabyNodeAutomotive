@@ -974,6 +974,178 @@ class CarCanBusBluetoothConformanceTest {
         }
     }
 
+
+    @Test
+    fun disconnectResolvesPendingRequestExactlyOnce() =
+        runBlocking {
+            val connection =
+                FlushTriggeredResponseConnection(
+                    responseCopies =
+                        0
+                )
+
+            val transport =
+                CarCanBusBluetooth()
+
+            val observedEvents =
+                Collections.synchronizedList(
+                    mutableListOf<CarStatusEvent>()
+                )
+
+            val collector =
+                launch(
+                    start =
+                        CoroutineStart.UNDISPATCHED
+                ) {
+                    transport
+                        .status()
+                        .collect { event ->
+                            observedEvents +=
+                                event
+                        }
+                }
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection
+                )
+
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "LOCK_DOORS"
+                        )
+                    )
+
+                withTimeout(
+                    5_000L
+                ) {
+                    while (
+                        observedEvents.none { event ->
+                            event is
+                                CarStatusEvent.CommandSent &&
+                                CarRequestEventMatcher.matches(
+                                    event =
+                                        event,
+                                    request =
+                                        request
+                                )
+                        }
+                    ) {
+                        delay(
+                            10L
+                        )
+                    }
+                }
+
+                transport.disconnect()
+
+                withTimeout(
+                    5_000L
+                ) {
+                    while (
+                        observedEvents.none { event ->
+                            event is
+                                CarStatusEvent.Error &&
+                                CarRequestEventMatcher.matches(
+                                    event =
+                                        event,
+                                    request =
+                                        request
+                                )
+                        } ||
+                        observedEvents.none { event ->
+                            event is
+                                CarStatusEvent.Disconnected
+                        }
+                    ) {
+                        delay(
+                            10L
+                        )
+                    }
+                }
+
+                delay(
+                    250L
+                )
+
+                val matchingErrors =
+                    observedEvents
+                        .filterIsInstance<
+                            CarStatusEvent.Error
+                        >()
+                        .filter { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+
+                assertEquals(
+                    1,
+                    matchingErrors.size
+                )
+
+                val terminalError =
+                    matchingErrors.single()
+
+                assertTrue(
+                    terminalError.message.contains(
+                        "outcome unknown",
+                        ignoreCase =
+                            true
+                    )
+                )
+
+                assertEquals(
+                    request.sessionGeneration,
+                    terminalError.sessionGeneration
+                )
+
+                assertEquals(
+                    request.requestId,
+                    terminalError.requestId
+                )
+
+                assertEquals(
+                    request.command,
+                    terminalError.command
+                )
+
+                assertEquals(
+                    1,
+                    observedEvents.count { event ->
+                        event is
+                            CarStatusEvent.Disconnected
+                    }
+                )
+
+                assertFalse(
+                    connection.isConnected
+                )
+
+                assertFalse(
+                    transport
+                        .close()
+                        .any { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+                )
+            } finally {
+                collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
     private class FlushTriggeredResponseConnection(
         private val responseCommand:
             String =
