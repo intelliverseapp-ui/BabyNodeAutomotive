@@ -81,6 +81,13 @@ class CarCanBusBluetooth : CarCanTransport {
     private val writeMutex =
         Mutex()
 
+    private val socketGeneration =
+        SocketGeneration()
+
+    @Volatile
+    private var activeSocketGeneration =
+        0L
+
     private val statusFlow =
         MutableSharedFlow<CarStatusEvent>(
             extraBufferCapacity = 64
@@ -161,6 +168,9 @@ class CarCanBusBluetooth : CarCanTransport {
             intentionalDisconnect =
                 false
 
+            val connectionGeneration =
+                socketGeneration.advance()
+
             Log.i(
                 TAG,
                 "Starting Bluetooth connection"
@@ -230,15 +240,41 @@ class CarCanBusBluetooth : CarCanTransport {
                     return
                 }
 
-                connectionMutex.withLock {
-                    bluetoothSocket =
-                        newSocket
+                val installed =
+                    connectionMutex.withLock {
+                        if (
+                            permanentlyClosed ||
+                            intentionalDisconnect ||
+                            !socketGeneration.isCurrent(
+                                connectionGeneration
+                            ) ||
+                            connectingSocket !==
+                            newSocket
+                        ) {
+                            false
+                        } else {
+                            bluetoothSocket =
+                                newSocket
 
-                    inputStream =
-                        newSocket.inputStream
+                            inputStream =
+                                newSocket.inputStream
 
-                    outputStream =
-                        newSocket.outputStream
+                            outputStream =
+                                newSocket.outputStream
+
+                            activeSocketGeneration =
+                                connectionGeneration
+
+                            true
+                        }
+                    }
+
+                if (!installed) {
+                    runCatching {
+                        newSocket.close()
+                    }
+
+                    return
                 }
 
                 connectingSocket =
@@ -250,15 +286,24 @@ class CarCanBusBluetooth : CarCanTransport {
                 )
 
                 startReceiveLoop(
-                    newSocket
+                    connectedSocket =
+                        newSocket,
+                    connectedGeneration =
+                        connectionGeneration
                 )
 
-                statusFlow.emit(
-                    CarStatusEvent.Connected(
-                        transportName =
-                            device.name ?: DEVICE_NAME
+                if (
+                    socketGeneration.isCurrent(
+                        connectionGeneration
                     )
-                )
+                ) {
+                    statusFlow.emit(
+                        CarStatusEvent.Connected(
+                            transportName =
+                                device.name ?: DEVICE_NAME
+                        )
+                    )
+                }
             } catch (e: CancellationException) {
                 runCatching {
                     newSocket?.close()
@@ -427,6 +472,11 @@ class CarCanBusBluetooth : CarCanTransport {
         intentionalDisconnect =
             true
 
+        socketGeneration.invalidate()
+
+        activeSocketGeneration =
+            0L
+
         Log.i(
             TAG,
             "Disconnecting Bluetooth transport"
@@ -531,6 +581,9 @@ class CarCanBusBluetooth : CarCanTransport {
         var writeCompleted =
             false
 
+        var writeGeneration =
+            0L
+
         try {
             writeMutex.withLock {
                 if (
@@ -545,8 +598,14 @@ class CarCanBusBluetooth : CarCanTransport {
                 val activeSocket =
                     bluetoothSocket
 
+                val writeSocketGeneration =
+                    activeSocketGeneration
+
                 val activeOutputStream =
                     outputStream
+
+                writeGeneration =
+                    writeSocketGeneration
 
                 if (
                     activeSocket == null ||
@@ -754,7 +813,9 @@ class CarCanBusBluetooth : CarCanTransport {
                      */
                     handleConnectionLoss(
                         reason =
-                            message
+                            message,
+                        expectedGeneration =
+                            writeGeneration
                     )
 
                     throw CarCommandOutcomeUnknownException(
@@ -788,6 +849,11 @@ class CarCanBusBluetooth : CarCanTransport {
 
         intentionalDisconnect =
             true
+
+        socketGeneration.invalidate()
+
+        activeSocketGeneration =
+            0L
 
         Log.i(
             TAG,
@@ -886,7 +952,8 @@ class CarCanBusBluetooth : CarCanTransport {
     }
 
     private fun startReceiveLoop(
-        connectedSocket: BluetoothSocket
+        connectedSocket: BluetoothSocket,
+        connectedGeneration: Long
     ) {
         receiveJob?.cancel()
 
@@ -908,7 +975,10 @@ class CarCanBusBluetooth : CarCanTransport {
                 try {
                     while (
                         connectedSocket.isConnected &&
-                        !permanentlyClosed
+                        !permanentlyClosed &&
+                        socketGeneration.isCurrent(
+                            connectedGeneration
+                        )
                     ) {
                         val frame =
                             BoundedFrameReader.read(
@@ -932,11 +1002,16 @@ class CarCanBusBluetooth : CarCanTransport {
 
                     if (
                         !intentionalDisconnect &&
-                        !permanentlyClosed
+                        !permanentlyClosed &&
+                        socketGeneration.isCurrent(
+                            connectedGeneration
+                        )
                     ) {
                         handleConnectionLoss(
                             reason =
-                                "Remote device disconnected"
+                                "Remote device disconnected",
+                            expectedGeneration =
+                                connectedGeneration
                         )
                     }
                 } catch (e: CancellationException) {
@@ -949,7 +1024,10 @@ class CarCanBusBluetooth : CarCanTransport {
                 } catch (e: Exception) {
                     if (
                         !intentionalDisconnect &&
-                        !permanentlyClosed
+                        !permanentlyClosed &&
+                        socketGeneration.isCurrent(
+                            connectedGeneration
+                        )
                     ) {
                         Log.e(
                             TAG,
@@ -972,7 +1050,14 @@ class CarCanBusBluetooth : CarCanTransport {
 
                         handleConnectionLoss(
                             reason =
-                                "Receive failed"
+                                "Receive failed",
+                            expectedGeneration =
+                                connectedGeneration
+                        )
+                    } else {
+                        Log.i(
+                            TAG,
+                            "Ignoring stale receive-loop failure"
                         )
                     }
                 } finally {
@@ -1417,18 +1502,52 @@ class CarCanBusBluetooth : CarCanTransport {
     }
 
     private suspend fun handleConnectionLoss(
-        reason: String
+        reason: String,
+        expectedGeneration: Long
     ) {
-        cancelAllPendingCommands(
-            reason =
-                reason
-        )
+        if (
+            !socketGeneration.isCurrent(
+                expectedGeneration
+            )
+        ) {
+            Log.i(
+                TAG,
+                "Ignoring stale connection-loss notification"
+            )
+
+            return
+        }
 
         connectionMutex.withLock {
+            if (
+                !socketGeneration.isCurrent(
+                    expectedGeneration
+                ) ||
+                activeSocketGeneration !=
+                expectedGeneration
+            ) {
+                Log.i(
+                    TAG,
+                    "Ignoring stale connection-loss cleanup"
+                )
+
+                return@withLock
+            }
+
+            cancelAllPendingCommands(
+                reason =
+                    reason
+            )
+
             val hadConnection =
                 bluetoothSocket != null ||
                     inputStream != null ||
                     outputStream != null
+
+            socketGeneration.invalidate()
+
+            activeSocketGeneration =
+                0L
 
             closeSocketResourcesImmediately()
 
@@ -1450,6 +1569,9 @@ class CarCanBusBluetooth : CarCanTransport {
 
     private suspend fun closeSocketResources() {
         connectionMutex.withLock {
+            activeSocketGeneration =
+                0L
+
             closeSocketResourcesImmediately()
         }
     }
