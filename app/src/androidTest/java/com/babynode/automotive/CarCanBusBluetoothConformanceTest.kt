@@ -14,6 +14,8 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -405,6 +407,117 @@ class CarCanBusBluetoothConformanceTest {
                 )
             } finally {
                 collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
+
+    @Test
+    fun closeReturnsOneTerminalOutcomeForPendingRequest() =
+        runBlocking {
+            val connection =
+                FlushTriggeredResponseConnection(
+                    responseCopies =
+                        0
+                )
+
+            val transport =
+                CarCanBusBluetooth()
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection
+                )
+
+                val sentEventDeferred =
+                    async(
+                        start =
+                            CoroutineStart.UNDISPATCHED
+                    ) {
+                        withTimeout(
+                            5_000L
+                        ) {
+                            transport
+                                .status()
+                                .filterIsInstance<
+                                    CarStatusEvent.CommandSent
+                                >()
+                                .first()
+                        }
+                    }
+
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "LOCK_DOORS"
+                        )
+                    )
+
+                val sentEvent =
+                    sentEventDeferred.await()
+
+                assertTrue(
+                    CarRequestEventMatcher.matches(
+                        event =
+                            sentEvent,
+                        request =
+                            request
+                    )
+                )
+
+                val terminalEvents =
+                    transport.close()
+
+                val matchingTerminalEvents =
+                    terminalEvents.filter { event ->
+                        CarRequestEventMatcher.matches(
+                            event =
+                                event,
+                            request =
+                                request
+                        )
+                    }
+
+                assertEquals(
+                    1,
+                    matchingTerminalEvents.size
+                )
+
+                val terminalError =
+                    matchingTerminalEvents
+                        .single() as
+                        CarStatusEvent.Error
+
+                assertTrue(
+                    terminalError.message.contains(
+                        "outcome unknown",
+                        ignoreCase =
+                            true
+                    )
+                )
+
+                assertEquals(
+                    request.sessionGeneration,
+                    terminalError.sessionGeneration
+                )
+
+                assertEquals(
+                    request.requestId,
+                    terminalError.requestId
+                )
+
+                assertEquals(
+                    request.command,
+                    terminalError.command
+                )
+
+                assertTrue(
+                    transport.close()
+                        .isEmpty()
+                )
+            } finally {
                 transport.close()
             }
         }
