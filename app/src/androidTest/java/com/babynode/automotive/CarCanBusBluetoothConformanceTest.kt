@@ -1907,8 +1907,8 @@ class CarCanBusBluetoothConformanceTest {
 
                 oldConnection.releaseReadFailure()
 
-                delay(
-                    250L
+                assertTrue(
+                    oldConnection.awaitReceiveLoopFinished()
                 )
 
                 assertTrue(
@@ -2007,6 +2007,11 @@ class CarCanBusBluetoothConformanceTest {
                 1
             )
 
+        private val receiveLoopFinished =
+            CountDownLatch(
+                1
+            )
+
         override val inputStream:
             InputStream =
             object : InputStream() {
@@ -2024,6 +2029,10 @@ class CarCanBusBluetoothConformanceTest {
                         "Simulated stale receive failure"
                     )
                 }
+
+                override fun close() {
+                    receiveLoopFinished.countDown()
+                }
             }
 
         override val outputStream =
@@ -2039,6 +2048,14 @@ class CarCanBusBluetoothConformanceTest {
 
         fun releaseReadFailure() {
             readRelease.countDown()
+        }
+
+        fun awaitReceiveLoopFinished():
+            Boolean {
+            return receiveLoopFinished.await(
+                5L,
+                TimeUnit.SECONDS
+            )
         }
 
         override fun connect() {
