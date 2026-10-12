@@ -177,6 +177,24 @@ class MainActivity : ComponentActivity() {
                 savedInstanceState
             )
 
+        val restoredTerminalOutcomes =
+            BabyNodeApp
+                .instance
+                .consumeTerminalRequestOutcomes()
+
+        if (restoredTerminalOutcomes.isNotEmpty()) {
+            statusBus.replaceTransportStatus(
+                terminalEvents =
+                    restoredTerminalOutcomes
+            )
+
+            Log.w(
+                TAG,
+                "Restored terminal outcomes from prior Activity: " +
+                    "count=${restoredTerminalOutcomes.size}"
+            )
+        }
+
         enableEdgeToEdge()
 
         val initialTransport =
@@ -913,7 +931,24 @@ class MainActivity : ComponentActivity() {
         transportEventsJob =
             null
 
-        transport.close()
+        val terminalEvents =
+            transport.close()
+
+        if (terminalEvents.isNotEmpty()) {
+            val persisted =
+                BabyNodeApp
+                    .instance
+                    .saveTerminalRequestOutcomes(
+                        terminalEvents
+                    )
+
+            if (!persisted) {
+                Log.e(
+                    TAG,
+                    "Terminal request outcomes could not be persisted"
+                )
+            }
+        }
 
         super.onDestroy()
     }

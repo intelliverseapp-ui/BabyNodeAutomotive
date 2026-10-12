@@ -2,6 +2,8 @@ package com.babynode.automotive
 
 import android.app.Application
 import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
 
 class BabyNodeApp : Application() {
 
@@ -114,6 +116,182 @@ class BabyNodeApp : Application() {
     }
 
     /**
+     * Persists request-specific terminal outcomes produced while
+     * closing the active transport.
+     *
+     * Commands are recorded only for user visibility. They are never
+     * submitted or replayed from this storage.
+     */
+    fun saveTerminalRequestOutcomes(
+        events: List<CarStatusEvent>
+    ): Boolean {
+        val terminalEvents =
+            events.filterIsInstance<
+                CarStatusEvent.Error
+            >()
+                .filter {
+                    it.isRequestSpecific
+                }
+
+        val encodedEvents =
+            JSONArray()
+
+        terminalEvents.forEach { event ->
+            val requestId =
+                event.requestId
+                    ?: return@forEach
+
+            val command =
+                event.command
+                    ?: return@forEach
+
+            val encodedEvent =
+                JSONObject()
+                    .put(
+                        "message",
+                        event.message
+                    )
+                    .put(
+                        "request_id",
+                        requestId
+                    )
+                    .put(
+                        "command",
+                        command.command
+                    )
+
+            command.value?.let { value ->
+                encodedEvent.put(
+                    "value",
+                    value
+                )
+            }
+
+            encodedEvents.put(
+                encodedEvent
+            )
+        }
+
+        return preferences
+            .edit()
+            .putString(
+                KEY_TERMINAL_REQUEST_OUTCOMES,
+                encodedEvents.toString()
+            )
+            .commit()
+    }
+
+    /**
+     * Returns and removes terminal outcomes saved during prior
+     * Activity destruction.
+     *
+     * Stored commands are reconstructed only as status information.
+     * Nothing in this method performs transport submission.
+     */
+    fun consumeTerminalRequestOutcomes():
+        List<CarStatusEvent> {
+        val encodedEvents =
+            preferences.getString(
+                KEY_TERMINAL_REQUEST_OUTCOMES,
+                null
+            )
+                ?: return emptyList()
+
+        val cleared =
+            clearTerminalRequestOutcomes()
+
+        if (!cleared) {
+            return emptyList()
+        }
+
+        return runCatching {
+            val array =
+                JSONArray(
+                    encodedEvents
+                )
+
+            buildList {
+                for (
+                    index in
+                    0 until array.length()
+                ) {
+                    val encodedEvent =
+                        array.getJSONObject(
+                            index
+                        )
+
+                    val requestId =
+                        encodedEvent.getLong(
+                            "request_id"
+                        )
+
+                    val commandName =
+                        encodedEvent.getString(
+                            "command"
+                        )
+
+                    val message =
+                        encodedEvent.getString(
+                            "message"
+                        )
+
+                    val commandValue =
+                        if (
+                            encodedEvent.has(
+                                "value"
+                            )
+                        ) {
+                            encodedEvent.getString(
+                                "value"
+                            )
+                        } else {
+                            null
+                        }
+
+                    if (
+                        BabyNodeProtocol.validateRequestId(
+                            requestId
+                        ) &&
+                        commandName.isNotBlank() &&
+                        message.isNotBlank()
+                    ) {
+                        add(
+                            CarStatusEvent.Error(
+                                message =
+                                    message,
+                                requestId =
+                                    requestId,
+                                command =
+                                    CanonicalCommand(
+                                        command =
+                                            commandName,
+                                        value =
+                                            commandValue
+                                    )
+                            )
+                        )
+                    }
+                }
+            }
+        }.getOrElse {
+            emptyList()
+        }
+    }
+
+    /**
+     * Removes all persisted terminal request outcomes.
+     */
+    fun clearTerminalRequestOutcomes():
+        Boolean {
+        return preferences
+            .edit()
+            .remove(
+                KEY_TERMINAL_REQUEST_OUTCOMES
+            )
+            .commit()
+    }
+
+    /**
      * Clears the stored BabyNodeCAN identity.
      *
      * This can later support an explicit user-facing action such as
@@ -145,6 +323,9 @@ class BabyNodeApp : Application() {
 
         private const val KEY_SELECTED_MODULE =
             "selected_babynodecan_module"
+
+        private const val KEY_TERMINAL_REQUEST_OUTCOMES =
+            "terminal_request_outcomes"
 
         private val BLUETOOTH_ADDRESS_PATTERN =
             Regex(
