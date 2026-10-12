@@ -22,6 +22,11 @@ sealed interface CarCommandDispatchResult {
         val command: CanonicalCommand
     ) : CarCommandDispatchResult
 
+    data class OutcomeUnknown(
+        val request: CarCommandRequest,
+        val message: String
+    ) : CarCommandDispatchResult
+
     data class Rejected(
         val reason: String
     ) : CarCommandDispatchResult
@@ -596,6 +601,27 @@ class CarCommandDispatcher(
                             request
                     )
                 )
+            } catch (
+                e: CarCommandOutcomeUnknownException
+            ) {
+                Log.w(
+                    TAG,
+                    "Command transmission outcome unknown: " +
+                        "id=${e.request.requestId}",
+                    e
+                )
+
+                onResult(
+                    CarCommandDispatchResult.OutcomeUnknown(
+                        request =
+                            e.request,
+                        message =
+                            (
+                                e.message
+                                    ?: "Command outcome unknown"
+                            )
+                    )
+                )
             } catch (e: CancellationException) {
                 Log.i(
                     TAG,
@@ -760,6 +786,27 @@ class CarCommandDispatcher(
                             request
                     )
                 )
+            } catch (
+                e: CarCommandOutcomeUnknownException
+            ) {
+                Log.w(
+                    TAG,
+                    "Confirmed command outcome unknown: " +
+                        "id=${e.request.requestId}",
+                    e
+                )
+
+                onResult(
+                    CarCommandDispatchResult.OutcomeUnknown(
+                        request =
+                            e.request,
+                        message =
+                            (
+                                e.message
+                                    ?: "Confirmed command outcome unknown"
+                            )
+                    )
+                )
             } catch (e: CancellationException) {
                 Log.i(
                     TAG,
@@ -827,6 +874,14 @@ class CarCommandDispatcher(
                             "Compatibility submission stopped for " +
                                 "explicit confirmation: " +
                                 result.command.command
+                        )
+                    }
+
+                    is CarCommandDispatchResult.OutcomeUnknown -> {
+                        Log.w(
+                            TAG,
+                            "Compatibility submission outcome unknown: " +
+                                "id=${result.request.requestId}"
                         )
                     }
 

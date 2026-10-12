@@ -640,6 +640,81 @@ class CarCommandDispatcherTest {
         )
     }
 
+
+    @Test
+    fun uncertainTransportFailurePreservesRequestIdentity() {
+        val uncertainRequest =
+            CarCommandRequest(
+                requestId =
+                    77L,
+                command =
+                    CanonicalCommand(
+                        command =
+                            "LOCK_DOORS"
+                    )
+            )
+
+        val transport =
+            FakeTransport()
+
+        val dispatcher =
+            createDispatcher(
+                transport
+            )
+
+        val configurationRequest =
+            submitConfiguration(
+                dispatcher =
+                    dispatcher
+            )
+
+        dispatcher.acceptTransportEvent(
+            CarStatusEvent.CommandResponse(
+                requestId =
+                    configurationRequest.requestId,
+                command =
+                    configurationRequest.command,
+                status =
+                    "ok"
+            )
+        )
+
+        transport.sendFailure =
+            CarCommandOutcomeUnknownException(
+                request =
+                    uncertainRequest,
+                message =
+                    "Bluetooth write outcome unknown"
+            )
+
+        var result:
+            CarCommandDispatchResult? =
+            null
+
+        dispatcher.handle(
+            text =
+                "lock the doors",
+            onResult = {
+                result =
+                    it
+            }
+        )
+
+        val outcomeUnknown =
+            result as
+                CarCommandDispatchResult.OutcomeUnknown
+
+        assertEquals(
+            uncertainRequest,
+            outcomeUnknown.request
+        )
+
+        assertEquals(
+            "Bluetooth write outcome unknown",
+            outcomeUnknown.message
+        )
+    }
+
     @Test
     fun commandIsBlockedBeforeModuleAcknowledgment() {
         val transport = FakeTransport()
@@ -899,8 +974,10 @@ class CarCommandDispatcherTest {
         )
     }
 
-    private class FakeTransport :
-        CarCanTransport {
+    private class FakeTransport(
+        var sendFailure:
+            Throwable? = null
+    ) : CarCanTransport {
 
         val sentCommands =
             mutableListOf<CanonicalCommand>()
@@ -919,6 +996,10 @@ class CarCommandDispatcherTest {
         ): CarCommandRequest {
             sentCommands +=
                 command
+
+            sendFailure?.let {
+                throw it
+            }
 
             return CarCommandRequest(
                 requestId =

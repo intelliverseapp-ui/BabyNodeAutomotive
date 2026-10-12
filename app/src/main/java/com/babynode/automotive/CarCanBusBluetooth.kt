@@ -621,13 +621,16 @@ class CarCanBusBluetooth : CarCanTransport {
                         pendingCommand
                 )
 
+                val message =
+                    "Command send cancelled after write started: " +
+                        "outcome unknown"
+
                 transportScope.launch {
                     emitRequestError(
                         request =
                             request,
                         message =
-                            "Command send cancelled after write " +
-                                "started: outcome unknown",
+                            message,
                         throwable =
                             e
                     )
@@ -638,36 +641,17 @@ class CarCanBusBluetooth : CarCanTransport {
                     "Command cancellation outcome unknown: " +
                         "id=$messageId"
                 )
-            } else {
-                pendingCommands.remove(
-                    messageId,
-                    pendingCommand
-                )
 
-                pendingCommand
-                    .responseReceived
-                    .cancel()
-
-                transportScope.launch {
-                    emitRequestError(
-                        request =
-                            request,
-                        message =
-                            "Command send cancelled before write",
-                        throwable =
-                            e
-                    )
-                }
-
-                Log.i(
-                    TAG,
-                    "Command send cancelled before write: " +
-                        "id=$messageId"
+                throw CarCommandOutcomeUnknownException(
+                    request =
+                        request,
+                    message =
+                        message,
+                    cause =
+                        e
                 )
             }
 
-            throw e
-        } catch (e: Exception) {
             pendingCommands.remove(
                 messageId,
                 pendingCommand
@@ -677,33 +661,101 @@ class CarCanBusBluetooth : CarCanTransport {
                 .responseReceived
                 .cancel()
 
-            val message =
-                "Send failed: " +
-                    (
-                        e.message
-                            ?: e.javaClass.simpleName
+            transportScope.launch {
+                emitRequestError(
+                    request =
+                        request,
+                    message =
+                        "Command send cancelled before write",
+                    throwable =
+                        e
+                )
+            }
+
+            Log.i(
+                TAG,
+                "Command send cancelled before write: " +
+                    "id=$messageId"
+            )
+
+            throw e
+        } catch (e: Exception) {
+            val writeOutcome =
+                BluetoothWriteOutcome.classify(
+                    writeAttemptStarted =
+                        writeAttemptStarted,
+                    writeCompleted =
+                        writeCompleted
+                )
+
+            when (writeOutcome) {
+                BluetoothWriteOutcome.DEFINITELY_NOT_TRANSMITTED -> {
+                    pendingCommands.remove(
+                        messageId,
+                        pendingCommand
                     )
 
-            Log.e(
-                TAG,
-                message,
-                e
-            )
+                    pendingCommand
+                        .responseReceived
+                        .cancel()
 
-            emitRequestError(
-                request =
-                    request,
-                message =
-                    message,
-                throwable =
-                    e
-            )
+                    val message =
+                        "Send failed before write: " +
+                            (
+                                e.message
+                                    ?: e.javaClass.simpleName
+                            )
 
-            if (writeCompleted) {
-                handleConnectionLoss(
-                    reason =
-                        "Send failed"
-                )
+                    Log.e(
+                        TAG,
+                        message,
+                        e
+                    )
+
+                    emitRequestError(
+                        request =
+                            request,
+                        message =
+                            message,
+                        throwable =
+                            e
+                    )
+                }
+
+                BluetoothWriteOutcome.OUTCOME_UNKNOWN,
+                BluetoothWriteOutcome.TRANSMITTED -> {
+                    val message =
+                        "Bluetooth write failed after transmission " +
+                            "may have started"
+
+                    Log.e(
+                        TAG,
+                        "$message: outcome unknown",
+                        e
+                    )
+
+                    /*
+                     * Connection-loss cleanup removes the pending
+                     * request and emits its single correlated terminal
+                     * error with an outcome-unknown message.
+                     *
+                     * Do not start a response timeout or emit another
+                     * request error here.
+                     */
+                    handleConnectionLoss(
+                        reason =
+                            message
+                    )
+
+                    throw CarCommandOutcomeUnknownException(
+                        request =
+                            request,
+                        message =
+                            "$message: outcome unknown",
+                        cause =
+                            e
+                    )
+                }
             }
 
             throw e

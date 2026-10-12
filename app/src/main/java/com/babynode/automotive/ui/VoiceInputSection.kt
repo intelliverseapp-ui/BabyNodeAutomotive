@@ -40,6 +40,7 @@ private enum class VoiceRequestState {
     REJECTED,
     SUBMITTED,
     TIMED_OUT,
+    OUTCOME_UNKNOWN,
     FAILED
 }
 
@@ -283,6 +284,29 @@ fun VoiceInputSection(
                             )
                         }
 
+                        is CarCommandDispatchResult.OutcomeUnknown -> {
+                            pendingConfirmation =
+                                null
+
+                            activeRequest =
+                                dispatchResult.request
+
+                            transportStatusForCurrentRequest =
+                                null
+
+                            failureMessage =
+                                dispatchResult.message
+
+                            requestState =
+                                VoiceRequestState.OUTCOME_UNKNOWN
+
+                            Log.w(
+                                TAG,
+                                "Command transmission outcome unknown: " +
+                                    "id=${dispatchResult.request.requestId}"
+                            )
+                        }
+
                         is CarCommandDispatchResult.Rejected -> {
                             activeRequest =
                                 null
@@ -451,6 +475,29 @@ fun VoiceInputSection(
 
                                     requestState =
                                         VoiceRequestState.CONFIRMATION_REQUIRED
+                                }
+
+                                is CarCommandDispatchResult.OutcomeUnknown -> {
+                                    pendingConfirmation =
+                                        null
+
+                                    activeRequest =
+                                        result.request
+
+                                    transportStatusForCurrentRequest =
+                                        null
+
+                                    failureMessage =
+                                        result.message
+
+                                    requestState =
+                                        VoiceRequestState.OUTCOME_UNKNOWN
+
+                                    Log.w(
+                                        TAG,
+                                        "Confirmed command outcome unknown: " +
+                                            "id=${result.request.requestId}"
+                                    )
                                 }
 
                                 is CarCommandDispatchResult.Rejected -> {
@@ -693,6 +740,14 @@ private fun voiceRequestStatusText(
             "Request outcome unknown after response timeout"
         }
 
+        VoiceRequestState.OUTCOME_UNKNOWN -> {
+            "Request outcome unknown: " +
+                (
+                    failureMessage
+                        ?: "transmission may have started"
+                )
+        }
+
         VoiceRequestState.FAILED -> {
             "Request failed: " +
                 (
@@ -732,6 +787,10 @@ private fun voiceTransportStatusText(
 
         VoiceRequestState.REJECTED -> {
             return "Transport: No command transmitted"
+        }
+
+        VoiceRequestState.OUTCOME_UNKNOWN -> {
+            return "Transport: Transmission may have started; outcome unknown"
         }
 
         VoiceRequestState.FAILED -> {

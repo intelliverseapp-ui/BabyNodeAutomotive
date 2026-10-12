@@ -26,6 +26,21 @@ data class CarCommandRequest(
 )
 
 /**
+ * Indicates that transmission may have started, so the physical
+ * command outcome cannot safely be described as failed or cancelled.
+ *
+ * The allocated request identity is preserved for UI correlation.
+ */
+class CarCommandOutcomeUnknownException(
+    val request: CarCommandRequest,
+    message: String,
+    cause: Throwable? = null
+) : Exception(
+    message,
+    cause
+)
+
+/**
  * Abstraction over the BabyNode Automotive transport layer.
  *
  * Implementations must explicitly provide every transport operation.

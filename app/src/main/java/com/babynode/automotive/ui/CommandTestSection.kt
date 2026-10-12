@@ -34,6 +34,7 @@ private enum class TypedRequestState {
     REJECTED,
     SUBMITTED,
     TIMED_OUT,
+    OUTCOME_UNKNOWN,
     FAILED
 }
 
@@ -310,6 +311,29 @@ fun CommandTestSection(
                             )
                         }
 
+                        is CarCommandDispatchResult.OutcomeUnknown -> {
+                            pendingConfirmation =
+                                null
+
+                            activeRequest =
+                                dispatchResult.request
+
+                            transportStatusForCurrentRequest =
+                                null
+
+                            failureMessage =
+                                dispatchResult.message
+
+                            requestState =
+                                TypedRequestState.OUTCOME_UNKNOWN
+
+                            Log.w(
+                                TAG,
+                                "Command transmission outcome unknown: " +
+                                    "id=${dispatchResult.request.requestId}"
+                            )
+                        }
+
                         is CarCommandDispatchResult.Rejected -> {
                                 activeRequest =
                                     null
@@ -424,6 +448,29 @@ fun CommandTestSection(
 
                                     requestState =
                                         TypedRequestState.CONFIRMATION_REQUIRED
+                                }
+
+                                is CarCommandDispatchResult.OutcomeUnknown -> {
+                                    pendingConfirmation =
+                                        null
+
+                                    activeRequest =
+                                        result.request
+
+                                    transportStatusForCurrentRequest =
+                                        null
+
+                                    failureMessage =
+                                        result.message
+
+                                    requestState =
+                                        TypedRequestState.OUTCOME_UNKNOWN
+
+                                    Log.w(
+                                        TAG,
+                                        "Confirmed command outcome unknown: " +
+                                            "id=${result.request.requestId}"
+                                    )
                                 }
 
                                 is CarCommandDispatchResult.Rejected -> {
@@ -658,6 +705,14 @@ private fun typedRequestStatusText(
             "Request outcome unknown after response timeout"
         }
 
+        TypedRequestState.OUTCOME_UNKNOWN -> {
+            "Request outcome unknown: " +
+                (
+                    failureMessage
+                        ?: "transmission may have started"
+                )
+        }
+
         TypedRequestState.FAILED -> {
             "Request failed: " +
                 (
@@ -689,6 +744,10 @@ private fun typedTransportStatusText(
 
         TypedRequestState.REJECTED -> {
             return "Transport: No command transmitted"
+        }
+
+        TypedRequestState.OUTCOME_UNKNOWN -> {
+            return "Transport: Transmission may have started; outcome unknown"
         }
 
         TypedRequestState.FAILED -> {
