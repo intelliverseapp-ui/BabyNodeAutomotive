@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.babynode.automotive.BuildConfig
 import com.babynode.automotive.CarConnectionState
 import com.babynode.automotive.CarCommandDispatcher
 import com.babynode.automotive.CarStatusEvent
@@ -261,26 +262,47 @@ fun AutomotiveScreen(
             eventHistory = eventHistory
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        if (BuildConfig.DEBUG) {
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        24.dp
+                    )
+            )
 
-        // -------------------------------
-        // Command Test Section
-        // -------------------------------
-        Log.i(TAG, "Render CommandTestSection(): latestEvent=$status")
-        CommandTestSection(
-            dispatcher = dispatcher,
-            status = status,
-            eventHistory = eventHistory
-        )
+            // Debug-only free-text command interface.
+            Log.d(
+                TAG,
+                "Render CommandTestSection(): latestEvent=$status"
+            )
 
-        Spacer(modifier = Modifier.height(24.dp))
+            CommandTestSection(
+                dispatcher =
+                    dispatcher,
+                status =
+                    status,
+                eventHistory =
+                    eventHistory
+            )
 
-        // -------------------------------
-        // CAN Debug Section
-        // -------------------------------
-        Log.i(TAG, "Render CanDebugSection(): eventHistorySize=${eventHistory.size}")
-        CanDebugSection(
-            eventHistory = eventHistory
-        )
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        24.dp
+                    )
+            )
+
+            // Debug-only transport event history.
+            Log.d(
+                TAG,
+                "Render CanDebugSection(): " +
+                    "eventHistorySize=${eventHistory.size}"
+            )
+
+            CanDebugSection(
+                eventHistory =
+                    eventHistory
+            )
+        }
     }
 }
