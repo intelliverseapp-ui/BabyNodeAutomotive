@@ -157,34 +157,12 @@ class CarStatusBus {
             .value
             .asReversed()
             .firstOrNull { event ->
-                when (event) {
-                    is CarStatusEvent.CommandSent -> {
-                        event.requestId ==
-                            request.requestId &&
-                            event.command ==
-                            request.command
-                    }
-
-                    is CarStatusEvent.CommandResponse -> {
-                        event.requestId ==
-                            request.requestId &&
-                            event.command ==
-                            request.command
-                    }
-
-                    is CarStatusEvent.Error -> {
-                        event.requestId ==
-                            request.requestId &&
-                            event.command ==
-                            request.command
-                    }
-
-                    is CarStatusEvent.DeviceApprovalRequired,
-                    is CarStatusEvent.Connected,
-                    is CarStatusEvent.Disconnected -> {
-                        false
-                    }
-                }
+                CarRequestEventMatcher.matches(
+                    event =
+                        event,
+                    request =
+                        request
+                )
             }
     }
 

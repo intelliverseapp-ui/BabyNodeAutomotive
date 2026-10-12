@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.babynode.automotive.CarCommandDispatchResult
 import com.babynode.automotive.CarCommandDispatcher
 import com.babynode.automotive.CarCommandRequest
+import com.babynode.automotive.CarRequestEventMatcher
 import com.babynode.automotive.CarStatusEvent
 
 private const val TAG =
@@ -113,7 +114,7 @@ fun VoiceInputSection(
                 eventHistory
                     .asReversed()
                     .firstOrNull { event ->
-                        eventMatchesRequest(
+                        CarRequestEventMatcher.matches(
                             event =
                                 event,
                             request =
@@ -241,7 +242,7 @@ fun VoiceInputSection(
                              */
                             if (
                                 status != null &&
-                                eventMatchesRequest(
+                                CarRequestEventMatcher.matches(
                                     event =
                                         status,
                                     request =
@@ -623,40 +624,6 @@ fun VoiceInputSection(
             style =
                 MaterialTheme.typography.bodyMedium
         )
-    }
-}
-
-private fun eventMatchesRequest(
-    event: CarStatusEvent,
-    request: CarCommandRequest
-): Boolean {
-    return when (event) {
-        is CarStatusEvent.CommandSent -> {
-            event.requestId ==
-                request.requestId &&
-                event.command ==
-                request.command
-        }
-
-        is CarStatusEvent.CommandResponse -> {
-            event.requestId ==
-                request.requestId &&
-                event.command ==
-                request.command
-        }
-
-        is CarStatusEvent.Error -> {
-            event.requestId ==
-                request.requestId &&
-                event.command ==
-                request.command
-        }
-
-        is CarStatusEvent.DeviceApprovalRequired,
-        is CarStatusEvent.Connected,
-        is CarStatusEvent.Disconnected -> {
-            false
-        }
     }
 }
 
