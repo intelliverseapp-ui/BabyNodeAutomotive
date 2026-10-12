@@ -3,6 +3,7 @@ package com.babynode.automotive
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.io.OutputStream
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
@@ -1840,6 +1841,223 @@ class CarCanBusBluetoothConformanceTest {
 
             runCatching {
                 writtenBytes.close()
+            }
+        }
+    }
+
+
+    @Test
+    fun staleReceiveFailureCannotCloseNewConnection() =
+        runBlocking {
+            val oldConnection =
+                DelayedReadFailureConnection()
+
+            val newConnection =
+                FlushTriggeredResponseConnection()
+
+            val transport =
+                CarCanBusBluetooth()
+
+            val observedEvents =
+                Collections.synchronizedList(
+                    mutableListOf<CarStatusEvent>()
+                )
+
+            val collector =
+                launch(
+                    start =
+                        CoroutineStart.UNDISPATCHED
+                ) {
+                    transport
+                        .status()
+                        .collect { event ->
+                            observedEvents +=
+                                event
+                        }
+                }
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        oldConnection,
+                    transportName =
+                        "Old RFCOMM"
+                )
+
+                assertTrue(
+                    oldConnection.awaitReadStarted()
+                )
+
+                transport.installConnectionForTest(
+                    connection =
+                        newConnection,
+                    transportName =
+                        "New RFCOMM"
+                )
+
+                assertTrue(
+                    newConnection.isConnected
+                )
+
+                val disconnectedCountBeforeRelease =
+                    observedEvents.count { event ->
+                        event is
+                            CarStatusEvent.Disconnected
+                    }
+
+                oldConnection.releaseReadFailure()
+
+                delay(
+                    250L
+                )
+
+                assertTrue(
+                    newConnection.isConnected
+                )
+
+                assertEquals(
+                    disconnectedCountBeforeRelease,
+                    observedEvents.count { event ->
+                        event is
+                            CarStatusEvent.Disconnected
+                    }
+                )
+
+                val responseDeferred =
+                    async(
+                        start =
+                            CoroutineStart.UNDISPATCHED
+                    ) {
+                        withTimeout(
+                            5_000L
+                        ) {
+                            transport
+                                .status()
+                                .filterIsInstance<
+                                    CarStatusEvent.CommandResponse
+                                >()
+                                .first()
+                        }
+                    }
+
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "LOCK_DOORS"
+                        )
+                    )
+
+                val response =
+                    responseDeferred.await()
+
+                assertTrue(
+                    CarRequestEventMatcher.matches(
+                        event =
+                            response,
+                        request =
+                            request
+                    )
+                )
+
+                assertEquals(
+                    "ok",
+                    response.status
+                )
+
+                assertTrue(
+                    newConnection.isConnected
+                )
+
+                assertFalse(
+                    transport
+                        .close()
+                        .any { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+                )
+            } finally {
+                oldConnection.releaseReadFailure()
+                oldConnection.close()
+                collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
+
+    private class DelayedReadFailureConnection :
+        RfcommConnection {
+
+        override var isConnected =
+            false
+            private set
+
+        private val readStarted =
+            CountDownLatch(
+                1
+            )
+
+        private val readRelease =
+            CountDownLatch(
+                1
+            )
+
+        override val inputStream:
+            InputStream =
+            object : InputStream() {
+
+                override fun read():
+                    Int {
+                    readStarted.countDown()
+
+                    readRelease.await(
+                        5L,
+                        TimeUnit.SECONDS
+                    )
+
+                    throw IOException(
+                        "Simulated stale receive failure"
+                    )
+                }
+            }
+
+        override val outputStream =
+            ByteArrayOutputStream()
+
+        fun awaitReadStarted():
+            Boolean {
+            return readStarted.await(
+                5L,
+                TimeUnit.SECONDS
+            )
+        }
+
+        fun releaseReadFailure() {
+            readRelease.countDown()
+        }
+
+        override fun connect() {
+            isConnected =
+                true
+        }
+
+        override fun close() {
+            isConnected =
+                false
+
+            releaseReadFailure()
+
+            runCatching {
+                inputStream.close()
+            }
+
+            runCatching {
+                outputStream.close()
             }
         }
     }
