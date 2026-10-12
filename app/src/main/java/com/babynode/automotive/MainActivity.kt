@@ -78,6 +78,9 @@ class MainActivity : ComponentActivity() {
     private val statusBus =
         CarStatusBus()
 
+    private val connectionGeneration =
+        ConnectionGeneration()
+
     private var transportEventsJob:
         Job? = null
 
@@ -319,6 +322,28 @@ class MainActivity : ComponentActivity() {
                                         replacementDispatcher
                                 }
                             )
+                        },
+                        onRetryConnection = {
+                            connectionGeneration.advance()
+
+                            reconnectJob?.cancel()
+                            reconnectJob =
+                                null
+
+                            connectionJob?.cancel()
+                            connectionJob =
+                                null
+
+                            reconnectAttempt =
+                                0
+
+                            bluetoothStartupRequested =
+                                false
+
+                            statusBus
+                                .resetForTransportReplacement()
+
+                            ensureBluetoothPermissionsAndConnect()
                         }
                     )
                 }
@@ -379,6 +404,8 @@ class MainActivity : ComponentActivity() {
     ) {
         intentionalTransportReplacement =
             true
+
+        connectionGeneration.advance()
 
         deviceApprovalPending =
             false
@@ -545,8 +572,20 @@ class MainActivity : ComponentActivity() {
         val activeTransport =
             transport
 
+        val activeGeneration =
+            connectionGeneration.current()
+
         connectionJob =
             lifecycleScope.launch {
+                if (
+                    !connectionGeneration.isCurrent(
+                        activeGeneration
+                    ) ||
+                    activeTransport !== transport
+                ) {
+                    return@launch
+                }
+
                 statusBus.markConnecting(
                     TRANSPORT_NAME
                 )
@@ -577,22 +616,38 @@ class MainActivity : ComponentActivity() {
                         e
                     )
 
-                    statusBus.accept(
-                        CarStatusEvent.Error(
-                            "Bluetooth startup failed: " +
-                                (
-                                    e.message
-                                        ?: e.javaClass.simpleName
-                                ),
-                            e
+                    if (
+                        connectionGeneration.isCurrent(
+                            activeGeneration
+                        ) &&
+                        activeTransport === transport
+                    ) {
+                        statusBus.accept(
+                            CarStatusEvent.Error(
+                                "Bluetooth startup failed: " +
+                                    (
+                                        e.message
+                                            ?: e.javaClass.simpleName
+                                    ),
+                                e
+                            )
                         )
-                    )
+                    }
                 } finally {
-                    connectionJob =
-                        null
+                    if (
+                        connectionGeneration.isCurrent(
+                            activeGeneration
+                        )
+                    ) {
+                        connectionJob =
+                            null
+                    }
                 }
 
                 if (
+                    connectionGeneration.isCurrent(
+                        activeGeneration
+                    ) &&
                     !activityIsDestroying &&
                     !deviceApprovalPending &&
                     activeTransport === transport &&
@@ -626,9 +681,19 @@ class MainActivity : ComponentActivity() {
             return
         }
 
+        val reconnectGeneration =
+            connectionGeneration.current()
+
+        val reconnectTransport =
+            transport
+
         reconnectJob =
             lifecycleScope.launch {
                 while (
+                    connectionGeneration.isCurrent(
+                        reconnectGeneration
+                    ) &&
+                    reconnectTransport === transport &&
                     !activityIsDestroying &&
                     !intentionalTransportReplacement &&
                     reconnectAttempt <
@@ -660,6 +725,10 @@ class MainActivity : ComponentActivity() {
                     )
 
                     if (
+                        !connectionGeneration.isCurrent(
+                            reconnectGeneration
+                        ) ||
+                        reconnectTransport !== transport ||
                         activityIsDestroying ||
                         intentionalTransportReplacement
                     ) {
@@ -677,7 +746,16 @@ class MainActivity : ComponentActivity() {
                     }
 
                     val activeTransport =
-                        transport
+                        reconnectTransport
+
+                    if (
+                        !connectionGeneration.isCurrent(
+                            reconnectGeneration
+                        ) ||
+                        activeTransport !== transport
+                    ) {
+                        return@launch
+                    }
 
                     statusBus.markConnecting(
                         TRANSPORT_NAME
@@ -711,6 +789,9 @@ class MainActivity : ComponentActivity() {
                     )
 
                     if (
+                        connectionGeneration.isCurrent(
+                            reconnectGeneration
+                        ) &&
                         activeTransport === transport &&
                         statusBus.connectionState.value
                         is CarConnectionState.Connected
@@ -728,6 +809,10 @@ class MainActivity : ComponentActivity() {
                 }
 
                 if (
+                    connectionGeneration.isCurrent(
+                        reconnectGeneration
+                    ) &&
+                    reconnectTransport === transport &&
                     !activityIsDestroying &&
                     statusBus.connectionState.value
                     !is CarConnectionState.Connected

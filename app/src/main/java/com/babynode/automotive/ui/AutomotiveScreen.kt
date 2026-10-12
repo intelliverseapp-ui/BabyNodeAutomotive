@@ -27,7 +27,8 @@ fun AutomotiveScreen(
     modifier: Modifier = Modifier,
     onModuleSelected: (ModuleType) -> Unit = {},
     onApproveDevice: (String) -> Unit = {},
-    onForgetDevice: () -> Unit = {}
+    onForgetDevice: () -> Unit = {},
+    onRetryConnection: () -> Unit = {}
 ) {
     Log.i(TAG, "Render AutomotiveScreen(): moduleType=${moduleType.uiLabel}")
 
@@ -131,6 +132,33 @@ fun AutomotiveScreen(
             text = connectionText,
             style = MaterialTheme.typography.bodyMedium
         )
+
+        when (connectionState) {
+            CarConnectionState.Disconnected,
+            is CarConnectionState.Failed -> {
+                Spacer(
+                    modifier =
+                        Modifier.height(
+                            12.dp
+                        )
+                )
+
+                Button(
+                    onClick =
+                        onRetryConnection
+                ) {
+                    Text(
+                        text =
+                            "Retry Connection"
+                    )
+                }
+            }
+
+            is CarConnectionState.Connecting,
+            is CarConnectionState.Connected -> {
+                // No retry control while connecting or connected.
+            }
+        }
 
         val approvalRequest =
             status as?
