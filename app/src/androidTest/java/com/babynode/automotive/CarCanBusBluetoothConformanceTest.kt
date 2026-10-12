@@ -522,10 +522,159 @@ class CarCanBusBluetoothConformanceTest {
             }
         }
 
+
+    @Test
+    fun unsupportedResponseStatusFailsClosed() =
+        runBlocking {
+            val connection =
+                FlushTriggeredResponseConnection(
+                    responseStatus =
+                        "maybe"
+                )
+
+            val transport =
+                CarCanBusBluetooth()
+
+            val observedEvents =
+                Collections.synchronizedList(
+                    mutableListOf<CarStatusEvent>()
+                )
+
+            val collector =
+                launch(
+                    start =
+                        CoroutineStart.UNDISPATCHED
+                ) {
+                    transport
+                        .status()
+                        .collect { event ->
+                            observedEvents +=
+                                event
+                        }
+                }
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection
+                )
+
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "LOCK_DOORS"
+                        )
+                    )
+
+                withTimeout(
+                    5_000L
+                ) {
+                    while (
+                        observedEvents.none {
+                            it is
+                                CarStatusEvent.CommandSent
+                        }
+                    ) {
+                        delay(
+                            10L
+                        )
+                    }
+                }
+
+                delay(
+                    250L
+                )
+
+                assertFalse(
+                    observedEvents.any { event ->
+                        event is
+                            CarStatusEvent.CommandResponse &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+                )
+
+                assertFalse(
+                    observedEvents.any { event ->
+                        event is
+                            CarStatusEvent.Error &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+                )
+
+                val terminalEvents =
+                    transport.close()
+
+                val matchingTerminalEvents =
+                    terminalEvents.filter { event ->
+                        CarRequestEventMatcher.matches(
+                            event =
+                                event,
+                            request =
+                                request
+                        )
+                    }
+
+                assertEquals(
+                    1,
+                    matchingTerminalEvents.size
+                )
+
+                val terminalError =
+                    matchingTerminalEvents
+                        .single() as
+                        CarStatusEvent.Error
+
+                assertTrue(
+                    terminalError.message.contains(
+                        "outcome unknown",
+                        ignoreCase =
+                            true
+                    )
+                )
+
+                assertEquals(
+                    request.sessionGeneration,
+                    terminalError.sessionGeneration
+                )
+
+                assertEquals(
+                    request.requestId,
+                    terminalError.requestId
+                )
+
+                assertEquals(
+                    request.command,
+                    terminalError.command
+                )
+
+                assertTrue(
+                    transport.close()
+                        .isEmpty()
+                )
+            } finally {
+                collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
     private class FlushTriggeredResponseConnection(
         private val responseCommand:
             String =
             "LOCK_DOORS",
+        private val responseStatus:
+            String =
+            "ok",
         private val responseCopies:
             Int =
             1
@@ -634,7 +783,7 @@ class CarCanBusBluetoothConformanceTest {
                                 )
                                 .put(
                                     "status",
-                                    "ok"
+                                    responseStatus
                                 )
                                 .toString() +
                                 "\n"
