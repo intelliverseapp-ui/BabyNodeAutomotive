@@ -899,8 +899,11 @@ class CarCanBusBluetooth : CarCanTransport {
                         !permanentlyClosed
                     ) {
                         val frame =
-                            readBoundedFrame(
-                                reader
+                            BoundedFrameReader.read(
+                                reader =
+                                    reader,
+                                maximumLength =
+                                    MAXIMUM_FRAME_LENGTH
                             ) ?: break
 
                         val packet =
@@ -971,54 +974,6 @@ class CarCanBusBluetooth : CarCanTransport {
                     )
                 }
             }
-    }
-
-    private fun readBoundedFrame(
-        reader: BufferedReader
-    ): String? {
-        val frame =
-            StringBuilder()
-
-        while (true) {
-            val character =
-                reader.read()
-
-            if (character == -1) {
-                return if (frame.isEmpty()) {
-                    null
-                } else {
-                    throw IOException(
-                        "Bluetooth frame ended before newline"
-                    )
-                }
-            }
-
-            if (
-                character.toChar() ==
-                '\n'
-            ) {
-                return frame.toString()
-            }
-
-            if (
-                character.toChar() !=
-                '\r'
-            ) {
-                frame.append(
-                    character.toChar()
-                )
-            }
-
-            if (
-                frame.length >
-                MAXIMUM_FRAME_LENGTH
-            ) {
-                throw IOException(
-                    "Bluetooth frame exceeds " +
-                        "$MAXIMUM_FRAME_LENGTH characters"
-                )
-            }
-        }
     }
 
     private suspend fun processIncomingPacket(
