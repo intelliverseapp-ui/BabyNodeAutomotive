@@ -1014,7 +1014,9 @@ class CarCommandDispatcherTest {
             return emptyFlow()
         }
 
-        override fun close() {
+        override fun close():
+            List<CarStatusEvent> {
+            return emptyList()
         }
     }
 }

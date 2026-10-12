@@ -189,6 +189,28 @@ class CarStatusBus {
     }
 
     /**
+     * Replaces the active transport's observable status.
+     *
+     * Stale connection and request history are cleared first. Terminal
+     * request outcomes returned while closing the old transport are
+     * then retained for UI correlation.
+     */
+    fun replaceTransportStatus(
+        terminalEvents: List<CarStatusEvent>
+    ) {
+        _connectionState.value =
+            CarConnectionState.Disconnected
+
+        _latestEvent.value =
+            terminalEvents.lastOrNull()
+
+        _events.value =
+            terminalEvents.takeLast(
+                MAX_EVENT_HISTORY
+            )
+    }
+
+    /**
      * Resets all observable status when the active transport is
      * permanently replaced.
      */

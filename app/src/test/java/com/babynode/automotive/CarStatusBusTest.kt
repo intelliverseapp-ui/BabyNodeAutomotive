@@ -238,4 +238,55 @@ class CarStatusBusTest {
         )
     }
 
+
+    @Test
+    fun transportReplacementRetainsTerminalRequestOutcomes() {
+        val bus =
+            CarStatusBus()
+
+        bus.accept(
+            CarStatusEvent.Connected(
+                transportName =
+                    "Bluetooth"
+            )
+        )
+
+        val terminalEvent =
+            CarStatusEvent.Error(
+                message =
+                    "Transport closed: outcome unknown",
+                requestId =
+                    42L,
+                command =
+                    CanonicalCommand(
+                        command =
+                            "LOCK_DOORS"
+                    )
+            )
+
+        bus.replaceTransportStatus(
+            terminalEvents =
+                listOf(
+                    terminalEvent
+                )
+        )
+
+        assertEquals(
+            CarConnectionState.Disconnected,
+            bus.connectionState.value
+        )
+
+        assertEquals(
+            terminalEvent,
+            bus.latestEvent.value
+        )
+
+        assertEquals(
+            listOf(
+                terminalEvent
+            ),
+            bus.events.value
+        )
+    }
+
 }

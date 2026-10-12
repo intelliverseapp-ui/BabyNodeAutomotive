@@ -89,7 +89,8 @@ interface CarCanTransport {
      *
      * A transport must not be reused after close().
      */
-    fun close()
+    fun close():
+        List<CarStatusEvent>
 }
 
 /**

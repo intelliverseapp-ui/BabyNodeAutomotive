@@ -767,9 +767,10 @@ class CarCanBusBluetooth : CarCanTransport {
         return statusFlow
     }
 
-    override fun close() {
+    override fun close():
+        List<CarStatusEvent> {
         if (permanentlyClosed) {
-            return
+            return emptyList()
         }
 
         permanentlyClosed =
@@ -790,7 +791,8 @@ class CarCanBusBluetooth : CarCanTransport {
         connectingSocket =
             null
 
-        cancelAllPendingCommandsImmediately()
+        val terminalEvents =
+            cancelAllPendingCommandsImmediately()
 
         receiveJob?.cancel()
         receiveJob =
@@ -799,6 +801,8 @@ class CarCanBusBluetooth : CarCanTransport {
         closeSocketResourcesImmediately()
 
         transportScope.cancel()
+
+        return terminalEvents
     }
 
     private suspend fun emitRequestError(
@@ -1388,7 +1392,11 @@ class CarCanBusBluetooth : CarCanTransport {
         }
     }
 
-    private fun cancelAllPendingCommandsImmediately() {
+    private fun cancelAllPendingCommandsImmediately():
+        List<CarStatusEvent> {
+        val terminalEvents =
+            mutableListOf<CarStatusEvent>()
+
         val pendingEntries =
             pendingCommands
                 .entries
@@ -1415,7 +1423,7 @@ class CarCanBusBluetooth : CarCanTransport {
                         "id=${request.requestId}"
                 )
 
-                statusFlow.tryEmit(
+                val terminalEvent =
                     CarStatusEvent.Error(
                         message =
                             "Transport closed: outcome unknown",
@@ -1424,9 +1432,17 @@ class CarCanBusBluetooth : CarCanTransport {
                         command =
                             request.command
                     )
+
+                terminalEvents +=
+                    terminalEvent
+
+                statusFlow.tryEmit(
+                    terminalEvent
                 )
             }
         }
+
+        return terminalEvents
     }
 
     private suspend fun handleConnectionLoss(

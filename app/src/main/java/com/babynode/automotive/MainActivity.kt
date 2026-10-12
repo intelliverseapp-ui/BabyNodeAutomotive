@@ -394,13 +394,29 @@ class MainActivity : ComponentActivity() {
         connectionJob =
             null
 
+        val oldTransport =
+            transport
+
+        val oldDispatcher =
+            dispatcher
+
+        val terminalEvents =
+            oldTransport.close()
+
         transportEventsJob?.cancel()
         transportEventsJob =
             null
 
-        statusBus.resetForTransportReplacement()
+        terminalEvents.forEach { event ->
+            oldDispatcher.acceptTransportEvent(
+                event
+            )
+        }
 
-        transport.close()
+        statusBus.replaceTransportStatus(
+            terminalEvents =
+                terminalEvents
+        )
 
         val newTransport =
             CarCanBusBluetooth()
