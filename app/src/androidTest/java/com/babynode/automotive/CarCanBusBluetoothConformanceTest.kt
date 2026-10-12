@@ -6,9 +6,13 @@ import java.io.OutputStream
 import java.io.PipedInputStream
 import java.io.PipedOutputStream
 import java.nio.charset.StandardCharsets
+import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -272,10 +276,146 @@ class CarCanBusBluetoothConformanceTest {
             }
         }
 
+
+    @Test
+    fun duplicatePeerResponseProducesOneTerminalResult() =
+        runBlocking {
+            val connection =
+                FlushTriggeredResponseConnection(
+                    responseCopies =
+                        2
+                )
+
+            val transport =
+                CarCanBusBluetooth()
+
+            val observedEvents =
+                Collections.synchronizedList(
+                    mutableListOf<CarStatusEvent>()
+                )
+
+            val collector =
+                launch(
+                    start =
+                        CoroutineStart.UNDISPATCHED
+                ) {
+                    transport
+                        .status()
+                        .collect { event ->
+                            observedEvents +=
+                                event
+                        }
+                }
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection
+                )
+
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "LOCK_DOORS"
+                        )
+                    )
+
+                withTimeout(
+                    5_000L
+                ) {
+                    while (
+                        observedEvents.none {
+                            it is
+                                CarStatusEvent.CommandSent
+                        } ||
+                        observedEvents.none {
+                            it is
+                                CarStatusEvent.CommandResponse
+                        }
+                    ) {
+                        delay(
+                            10L
+                        )
+                    }
+                }
+
+                delay(
+                    250L
+                )
+
+                val matchingResponses =
+                    observedEvents
+                        .filterIsInstance<
+                            CarStatusEvent.CommandResponse
+                        >()
+                        .filter { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+
+                val matchingErrors =
+                    observedEvents
+                        .filterIsInstance<
+                            CarStatusEvent.Error
+                        >()
+                        .filter { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+
+                assertEquals(
+                    1,
+                    matchingResponses.size
+                )
+
+                assertTrue(
+                    matchingErrors.isEmpty()
+                )
+
+                assertEquals(
+                    matchingResponses.single(),
+                    CarRequestEventMatcher.selectBest(
+                        events =
+                            observedEvents.toList(),
+                        request =
+                            request
+                    )
+                )
+
+                assertFalse(
+                    transport
+                        .close()
+                        .any { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+                )
+            } finally {
+                collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
     private class FlushTriggeredResponseConnection(
         private val responseCommand:
             String =
-            "LOCK_DOORS"
+            "LOCK_DOORS",
+        private val responseCopies:
+            Int =
+            1
     ) : RfcommConnection {
 
         override var isConnected =
@@ -386,13 +526,17 @@ class CarCanBusBluetoothConformanceTest {
                                 .toString() +
                                 "\n"
 
-                        peerWriter.write(
-                            response.toByteArray(
-                                StandardCharsets.UTF_8
+                        repeat(
+                            responseCopies
+                        ) {
+                            peerWriter.write(
+                                response.toByteArray(
+                                    StandardCharsets.UTF_8
+                                )
                             )
-                        )
 
-                        peerWriter.flush()
+                            peerWriter.flush()
+                        }
                     }
                 }
             }
