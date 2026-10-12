@@ -62,10 +62,10 @@ class MainActivity : ComponentActivity() {
         private const val STATE_SELECTED_MODULE =
             "selected_module"
 
-        private const val MAXIMUM_RECONNECT_ATTEMPTS =
+        private const val DEFAULT_MAXIMUM_RECONNECT_ATTEMPTS =
             5
 
-        private val RECONNECT_DELAYS_MILLIS =
+        private val DEFAULT_RECONNECT_DELAYS_MILLIS =
             longArrayOf(
                 1_000L,
                 2_000L,
@@ -73,6 +73,29 @@ class MainActivity : ComponentActivity() {
                 8_000L,
                 10_000L
             )
+
+        internal var maximumReconnectAttempts:
+            Int =
+            DEFAULT_MAXIMUM_RECONNECT_ATTEMPTS
+
+        internal var reconnectDelaysMillis:
+            LongArray =
+            DEFAULT_RECONNECT_DELAYS_MILLIS.copyOf()
+
+        internal var reconnectObservationDelayMillis:
+            Long =
+            500L
+
+        internal fun resetRetryConfigurationForTest() {
+            maximumReconnectAttempts =
+                DEFAULT_MAXIMUM_RECONNECT_ATTEMPTS
+
+            reconnectDelaysMillis =
+                DEFAULT_RECONNECT_DELAYS_MILLIS.copyOf()
+
+            reconnectObservationDelayMillis =
+                500L
+        }
     }
 
     private lateinit var transport:
@@ -728,6 +751,48 @@ class MainActivity : ComponentActivity() {
             }
     }
 
+    internal fun scheduleReconnectForTest() {
+        scheduleReconnect(
+            reason =
+                "Lifecycle retry test"
+        )
+    }
+
+    internal fun manualRetryForTest() {
+        connectionGeneration.advance()
+
+        reconnectJob?.cancel()
+        reconnectJob =
+            null
+
+        connectionJob?.cancel()
+        connectionJob =
+            null
+
+        reconnectAttempt =
+            0
+
+        bluetoothStartupRequested =
+            false
+
+        statusBus
+            .resetForTransportReplacement()
+
+        connectCurrentTransport()
+    }
+
+    internal fun connectionStateForTest():
+        CarConnectionState {
+        return statusBus
+            .connectionState
+            .value
+    }
+
+    internal fun reconnectAttemptForTest():
+        Int {
+        return reconnectAttempt
+    }
+
     private fun scheduleReconnect(
         reason: String
     ) {
@@ -763,15 +828,15 @@ class MainActivity : ComponentActivity() {
                     !activityIsDestroying &&
                     !intentionalTransportReplacement &&
                     reconnectAttempt <
-                    MAXIMUM_RECONNECT_ATTEMPTS
+                    maximumReconnectAttempts
                 ) {
                     val delayIndex =
                         reconnectAttempt.coerceAtMost(
-                            RECONNECT_DELAYS_MILLIS.lastIndex
+                            reconnectDelaysMillis.lastIndex
                         )
 
                     val reconnectDelay =
-                        RECONNECT_DELAYS_MILLIS[
+                        reconnectDelaysMillis[
                             delayIndex
                         ]
 
@@ -851,7 +916,7 @@ class MainActivity : ComponentActivity() {
                      * whether another attempt is required.
                      */
                     delay(
-                        500L
+                        reconnectObservationDelayMillis
                     )
 
                     if (
@@ -886,7 +951,7 @@ class MainActivity : ComponentActivity() {
                     statusBus.accept(
                         CarStatusEvent.Error(
                             "BabyNodeCAN reconnection failed after " +
-                                "$MAXIMUM_RECONNECT_ATTEMPTS attempts"
+                                "$maximumReconnectAttempts attempts"
                         )
                     )
                 }
