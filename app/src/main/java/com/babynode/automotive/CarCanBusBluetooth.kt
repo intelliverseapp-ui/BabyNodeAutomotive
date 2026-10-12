@@ -851,9 +851,9 @@ class CarCanBusBluetooth : CarCanTransport {
                         pendingCommand.request
 
                     val message =
-                        "BabyNodeCAN response timeout: " +
-                            "id=${request.requestId} " +
-                            "command=${request.command.command}"
+                        CarResponseTimeoutMessage.forRequest(
+                            request
+                        )
 
                     Log.e(
                         TAG,
