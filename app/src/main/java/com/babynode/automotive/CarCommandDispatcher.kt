@@ -216,18 +216,20 @@ class CarCommandDispatcher(
                 .lowercase()
 
         if (
-            normalizedModuleId != "single" &&
-            normalizedModuleId != "dual"
+            !BabyNodePeerContract.supportsModule(
+                normalizedModuleId
+            )
         ) {
             Log.e(
                 TAG,
-                "Invalid module configuration rejected"
+                "Unsupported module configuration rejected: " +
+                    normalizedModuleId
             )
 
             onResult(
                 CarCommandDispatchResult.Rejected(
                     reason =
-                        "invalid_module_configuration"
+                        "unsupported_module_configuration"
                 )
             )
 

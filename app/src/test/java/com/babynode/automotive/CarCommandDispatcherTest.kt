@@ -48,6 +48,67 @@ class CarCommandDispatcherTest {
         )
     }
 
+
+    @Test
+    fun unsupportedDualModuleConfigurationFailsClosed() {
+        val transport =
+            FakeTransport()
+
+        val dispatcher =
+            createDispatcher(
+                transport
+            )
+
+        val handshakeRequest =
+            submitHandshake(
+                dispatcher =
+                    dispatcher
+            )
+
+        dispatcher.acceptTransportEvent(
+            CarStatusEvent.CommandResponse(
+                requestId =
+                    handshakeRequest.requestId,
+                command =
+                    handshakeRequest.command,
+                status =
+                    "ok"
+            )
+        )
+
+        var result:
+            CarCommandDispatchResult? =
+            null
+
+        dispatcher.sendModuleConfig(
+            moduleJsonId =
+                "dual",
+            onResult = {
+                result =
+                    it
+            }
+        )
+
+        assertEquals(
+            "unsupported_module_configuration",
+            (
+                result as
+                    CarCommandDispatchResult.Rejected
+                ).reason
+        )
+
+        assertEquals(
+            listOf(
+                "protocol.handshake"
+            ),
+            transport
+                .sentCommands
+                .map {
+                    it.command
+                }
+        )
+    }
+
     @Test
     fun handshakeMustBeAcknowledgedBeforeModuleConfiguration() {
         val transport =

@@ -34,13 +34,8 @@ enum class ModuleType(
     val jsonId: String
 ) {
     SINGLE_CAN(
-        "Single-CAN Module (ESP32-S3 WROOM)",
-        "single"
-    ),
-
-    DUAL_CAN(
-        "Dual-CAN Module (DuoCAN-C6)",
-        "dual"
+        "Single-CAN Module (ESP32-S3 WROOM, development stub)",
+        BabyNodePeerContract.SUPPORTED_MODULE
     )
 }
 

@@ -45,32 +45,16 @@ object BabyNodeProtocol {
         canTransmit: Any?,
         vehicleCommands: Any?
     ): Boolean {
-        val normalizedSessionId =
-            when (sessionId) {
-                is Byte ->
-                    sessionId.toLong()
-
-                is Short ->
-                    sessionId.toLong()
-
-                is Int ->
-                    sessionId.toLong()
-
-                is Long ->
-                    sessionId
-
-                else ->
-                    return false
-            }
-
-        return normalizedSessionId in
-            1L..MAX_SESSION_ID &&
-            module is String &&
-            module == "single" &&
-            canTransmit is Boolean &&
-            !canTransmit &&
-            vehicleCommands is String &&
-            vehicleCommands == "stub_only"
+        return BabyNodePeerContract.validateCapabilities(
+            sessionId =
+                sessionId,
+            module =
+                module,
+            canTransmit =
+                canTransmit,
+            vehicleCommands =
+                vehicleCommands
+        )
     }
 
     fun hasDuplicateTopLevelKeys(

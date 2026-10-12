@@ -103,14 +103,6 @@ fun AutomotiveScreen(
                         onModuleSelected(ModuleType.SINGLE_CAN)
                     }
                 )
-                DropdownMenuItem(
-                    text = { Text(ModuleType.DUAL_CAN.uiLabel) },
-                    onClick = {
-                        Log.i(TAG, "Module selected → ${ModuleType.DUAL_CAN.uiLabel}")
-                        moduleExpanded = false
-                        onModuleSelected(ModuleType.DUAL_CAN)
-                    }
-                )
             }
         }
 
