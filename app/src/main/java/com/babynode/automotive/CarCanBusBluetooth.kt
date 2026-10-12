@@ -155,6 +155,12 @@ class CarCanBusBluetooth(
         transportName: String =
             "Test RFCOMM"
     ) {
+        check(
+            BuildConfig.DEBUG
+        ) {
+            "RFCOMM test installation is unavailable in release builds"
+        }
+
         connectMutex.withLock {
             check(
                 !permanentlyClosed
