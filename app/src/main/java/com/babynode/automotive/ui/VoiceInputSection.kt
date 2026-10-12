@@ -22,7 +22,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.babynode.automotive.CarCommandDetector
 import com.babynode.automotive.CarCommandDispatchResult
 import com.babynode.automotive.CarCommandDispatcher
 import com.babynode.automotive.CarCommandRequest
@@ -206,25 +205,6 @@ fun VoiceInputSection(
 
                 requestState =
                     VoiceRequestState.NO_SPEECH
-
-                return@rememberLauncherForActivityResult
-            }
-
-            if (
-                !CarCommandDetector.isAutomotive(
-                    spoken
-                )
-            ) {
-                Log.i(
-                    TAG,
-                    "Voice request rejected by Phase 1 detector"
-                )
-
-                rejectionReason =
-                    "not a supported Phase 1 command"
-
-                requestState =
-                    VoiceRequestState.REJECTED
 
                 return@rememberLauncherForActivityResult
             }
