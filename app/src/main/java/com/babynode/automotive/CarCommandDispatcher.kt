@@ -18,6 +18,10 @@ sealed interface CarCommandDispatchResult {
         val request: CarCommandRequest
     ) : CarCommandDispatchResult
 
+    data class ConfirmationRequired(
+        val command: CanonicalCommand
+    ) : CarCommandDispatchResult
+
     data class Rejected(
         val reason: String
     ) : CarCommandDispatchResult
@@ -66,6 +70,10 @@ class CarCommandDispatcher(
     private var moduleConfigurationReady =
         false
 
+    @Volatile
+    private var pendingSensitiveConfirmation:
+        CarCommandDispatchResult.ConfirmationRequired? = null
+
     companion object {
         private const val TAG =
             "CarCommandDispatcher"
@@ -75,6 +83,12 @@ class CarCommandDispatcher(
 
         private const val MODULE_CONFIG_COMMAND =
             "config.module"
+
+        private val SENSITIVE_COMMANDS =
+            setOf(
+                "UNLOCK_DOORS",
+                "TRUNK_OPEN"
+            )
 
         private const val REJECTION_EMPTY =
             "empty_request"
@@ -293,6 +307,9 @@ class CarCommandDispatcher(
             pendingModuleConfigRequest =
                 null
 
+            pendingSensitiveConfirmation =
+                null
+
             return
         }
 
@@ -403,6 +420,13 @@ class CarCommandDispatcher(
         onResult:
             (CarCommandDispatchResult) -> Unit
     ) {
+        /*
+         * Every new user submission invalidates any older sensitive
+         * command that was awaiting confirmation.
+         */
+        pendingSensitiveConfirmation =
+            null
+
         val normalizedInput =
             text.trim()
 
@@ -520,6 +544,32 @@ class CarCommandDispatcher(
                     canonicalCommand
             )
 
+        if (
+            canonicalCommand in
+            SENSITIVE_COMMANDS
+        ) {
+            Log.i(
+                TAG,
+                "Sensitive command requires explicit confirmation: " +
+                    canonicalCommand
+            )
+
+            val confirmation =
+                CarCommandDispatchResult.ConfirmationRequired(
+                    command =
+                        command
+                )
+
+            pendingSensitiveConfirmation =
+                confirmation
+
+            onResult(
+                confirmation
+            )
+
+            return
+        }
+
         Log.i(
             TAG,
             "Approved Phase 1 command awaiting transport write: " +
@@ -585,6 +635,170 @@ class CarCommandDispatcher(
     }
 
     /**
+     * Cancels the exact sensitive command currently awaiting
+     * confirmation.
+     *
+     * Returns true only when the supplied confirmation matches the
+     * pending command and cancellation consumes it.
+     */
+    fun cancelSensitiveCommand(
+        confirmation:
+            CarCommandDispatchResult.ConfirmationRequired
+    ): Boolean {
+        val command =
+            confirmation.command
+
+        val pendingConfirmation =
+            pendingSensitiveConfirmation
+
+        if (
+            pendingConfirmation == null ||
+            pendingConfirmation !== confirmation
+        ) {
+            Log.w(
+                TAG,
+                "Invalid or stale sensitive-command cancellation rejected"
+            )
+
+            return false
+        }
+
+        pendingSensitiveConfirmation =
+            null
+
+        Log.i(
+            TAG,
+            "Sensitive command cancelled before transport: " +
+                command.command
+        )
+
+        return true
+    }
+
+    /**
+     * Transmits one sensitive command after deliberate confirmation.
+     *
+     * Only the exact command most recently returned through
+     * ConfirmationRequired is accepted. Confirmation is consumed
+     * before the transport write begins.
+     */
+    fun confirmSensitiveCommand(
+        confirmation:
+            CarCommandDispatchResult.ConfirmationRequired,
+        onResult:
+            (CarCommandDispatchResult) -> Unit
+    ) {
+        val command =
+            confirmation.command
+
+        val pendingConfirmation =
+            pendingSensitiveConfirmation
+
+        if (
+            pendingConfirmation == null ||
+            pendingConfirmation !== confirmation ||
+            command.command !in SENSITIVE_COMMANDS ||
+            !CarCommandMap.isPhaseOneCommand(
+                command.command
+            )
+        ) {
+            Log.w(
+                TAG,
+                "Invalid or stale sensitive-command confirmation rejected"
+            )
+
+            onResult(
+                CarCommandDispatchResult.Rejected(
+                    reason =
+                        "invalid_confirmation"
+                )
+            )
+
+            return
+        }
+
+        if (!moduleConfigurationReady) {
+            pendingSensitiveConfirmation =
+                null
+
+            Log.w(
+                TAG,
+                "Sensitive-command confirmation rejected because " +
+                    "module configuration is not acknowledged"
+            )
+
+            onResult(
+                CarCommandDispatchResult.Rejected(
+                    reason =
+                        REJECTION_MODULE_NOT_CONFIGURED
+                )
+            )
+
+            return
+        }
+
+        pendingSensitiveConfirmation =
+            null
+
+        scope.launch {
+            try {
+                val request =
+                    transport.sendCommand(
+                        command
+                    )
+
+                Log.i(
+                    TAG,
+                    "Confirmed sensitive command transmitted: " +
+                        "id=${request.requestId}, " +
+                        "command=${request.command.command}"
+                )
+
+                onResult(
+                    CarCommandDispatchResult.Submitted(
+                        request =
+                            request
+                    )
+                )
+            } catch (e: CancellationException) {
+                Log.i(
+                    TAG,
+                    "Confirmed sensitive command request cancelled"
+                )
+
+                onResult(
+                    CarCommandDispatchResult.Failed(
+                        message =
+                            "Confirmed command request cancelled"
+                    )
+                )
+
+                throw e
+            } catch (e: Exception) {
+                val message =
+                    "Confirmed sensitive command failed: " +
+                        (
+                            e.message
+                                ?: e.javaClass.simpleName
+                        )
+
+                Log.e(
+                    TAG,
+                    message,
+                    e
+                )
+
+                onResult(
+                    CarCommandDispatchResult.Failed(
+                        message =
+                            message
+                    )
+                )
+            }
+        }
+    }
+
+    /**
      * Compatibility entry point for call sites that do not yet need
      * the returned request identity.
      *
@@ -604,6 +818,15 @@ class CarCommandDispatcher(
                             TAG,
                             "Compatibility submission completed: " +
                                 "id=${result.request.requestId}"
+                        )
+                    }
+
+                    is CarCommandDispatchResult.ConfirmationRequired -> {
+                        Log.w(
+                            TAG,
+                            "Compatibility submission stopped for " +
+                                "explicit confirmation: " +
+                                result.command.command
                         )
                     }
 

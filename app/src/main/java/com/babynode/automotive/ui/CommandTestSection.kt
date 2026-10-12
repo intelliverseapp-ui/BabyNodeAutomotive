@@ -31,6 +31,7 @@ private enum class TypedRequestState {
     READY,
     EDITING,
     DISPATCHING,
+    CONFIRMATION_REQUIRED,
     REJECTED,
     SUBMITTED,
     TIMED_OUT,
@@ -50,6 +51,14 @@ fun CommandTestSection(
     var requestState by remember {
         mutableStateOf(
             TypedRequestState.READY
+        )
+    }
+
+    var pendingConfirmation by remember {
+        mutableStateOf<
+            CarCommandDispatchResult.ConfirmationRequired?
+        >(
+            null
         )
     }
 
@@ -170,6 +179,9 @@ fun CommandTestSection(
                  * preceding typed request.
                  */
                 activeRequest =
+                    null
+
+                pendingConfirmation =
                     null
 
                 transportStatusForCurrentRequest =
@@ -294,7 +306,31 @@ fun CommandTestSection(
                                 )
                             }
 
-                            is CarCommandDispatchResult.Rejected -> {
+                            is CarCommandDispatchResult.ConfirmationRequired -> {
+                            activeRequest =
+                                null
+
+                            transportStatusForCurrentRequest =
+                                null
+
+                            pendingConfirmation =
+                                dispatchResult
+
+                            rejectionReason =
+                                "explicit confirmation required for " +
+                                    dispatchResult.command.command
+
+                            requestState =
+                                TypedRequestState.CONFIRMATION_REQUIRED
+
+                            Log.i(
+                                TAG,
+                                "Sensitive command retained for explicit " +
+                                    "confirmation"
+                            )
+                        }
+
+                        is CarCommandDispatchResult.Rejected -> {
                                 activeRequest =
                                     null
 
@@ -349,6 +385,129 @@ fun CommandTestSection(
                         "Send Command"
                     }
             )
+        }
+
+        val confirmation =
+            pendingConfirmation
+
+        if (
+            requestState ==
+            TypedRequestState.CONFIRMATION_REQUIRED &&
+            confirmation != null
+        ) {
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        12.dp
+                    )
+            )
+
+            Text(
+                text =
+                    "Confirm sensitive command: " +
+                        confirmation.command.command,
+                style =
+                    MaterialTheme.typography.bodyMedium
+            )
+
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        8.dp
+                    )
+            )
+
+            Button(
+                onClick = {
+                    pendingConfirmation =
+                        null
+
+                    requestState =
+                        TypedRequestState.DISPATCHING
+
+                    dispatcher.confirmSensitiveCommand(
+                        confirmation =
+                            confirmation,
+                        onResult = { result ->
+                            when (result) {
+                                is CarCommandDispatchResult.Submitted -> {
+                                    activeRequest =
+                                        result.request
+
+                                    requestState =
+                                        TypedRequestState.SUBMITTED
+                                }
+
+                                is CarCommandDispatchResult.ConfirmationRequired -> {
+                                    pendingConfirmation =
+                                        result
+
+                                    requestState =
+                                        TypedRequestState.CONFIRMATION_REQUIRED
+                                }
+
+                                is CarCommandDispatchResult.Rejected -> {
+                                    rejectionReason =
+                                        typedDispatchRejectionText(
+                                            result.reason
+                                        )
+
+                                    requestState =
+                                        TypedRequestState.REJECTED
+                                }
+
+                                is CarCommandDispatchResult.Failed -> {
+                                    failureMessage =
+                                        result.message
+
+                                    requestState =
+                                        TypedRequestState.FAILED
+                                }
+                            }
+                        }
+                    )
+                }
+            ) {
+                Text(
+                    text =
+                        "Confirm Command"
+                )
+            }
+
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        8.dp
+                    )
+            )
+
+            Button(
+                onClick = {
+                    val cancelled =
+                        dispatcher.cancelSensitiveCommand(
+                            confirmation =
+                                confirmation
+                        )
+
+                    pendingConfirmation =
+                        null
+
+                    rejectionReason =
+                        if (cancelled) {
+                            "sensitive command cancelled before transmission"
+                        } else {
+                            "confirmation was no longer valid"
+                        }
+
+                    requestState =
+                        TypedRequestState.REJECTED
+                }
+            ) {
+                Text(
+                    text =
+                        "Cancel Command"
+                )
+            }
         }
 
         Spacer(
@@ -499,6 +658,10 @@ private fun typedRequestStatusText(
             "Validating and transmitting request"
         }
 
+        TypedRequestState.CONFIRMATION_REQUIRED -> {
+            "Confirmation required before transmission"
+        }
+
         TypedRequestState.REJECTED -> {
             "Request rejected: " +
                 (
@@ -538,6 +701,10 @@ private fun typedTransportStatusText(
 
         TypedRequestState.DISPATCHING -> {
             return "Transport: Preparing command request"
+        }
+
+        TypedRequestState.CONFIRMATION_REQUIRED -> {
+            return "Transport: Awaiting confirmation; no command transmitted"
         }
 
         TypedRequestState.REJECTED -> {

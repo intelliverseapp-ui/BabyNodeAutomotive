@@ -37,6 +37,7 @@ private enum class VoiceRequestState {
     CANCELLED,
     NO_SPEECH,
     DISPATCHING,
+    CONFIRMATION_REQUIRED,
     REJECTED,
     SUBMITTED,
     TIMED_OUT,
@@ -56,6 +57,14 @@ fun VoiceInputSection(
     var requestState by remember {
         mutableStateOf(
             VoiceRequestState.READY
+        )
+    }
+
+    var pendingConfirmation by remember {
+        mutableStateOf<
+            CarCommandDispatchResult.ConfirmationRequired?
+        >(
+            null
         )
     }
 
@@ -145,6 +154,9 @@ fun VoiceInputSection(
         ) { result ->
 
             activeRequest =
+                null
+
+            pendingConfirmation =
                 null
 
             transportStatusForCurrentRequest =
@@ -267,6 +279,30 @@ fun VoiceInputSection(
                             )
                         }
 
+                        is CarCommandDispatchResult.ConfirmationRequired -> {
+                            activeRequest =
+                                null
+
+                            transportStatusForCurrentRequest =
+                                null
+
+                            pendingConfirmation =
+                                dispatchResult
+
+                            rejectionReason =
+                                "explicit confirmation required for " +
+                                    dispatchResult.command.command
+
+                            requestState =
+                                VoiceRequestState.CONFIRMATION_REQUIRED
+
+                            Log.i(
+                                TAG,
+                                "Sensitive command retained for explicit " +
+                                    "confirmation"
+                            )
+                        }
+
                         is CarCommandDispatchResult.Rejected -> {
                             activeRequest =
                                 null
@@ -376,6 +412,129 @@ fun VoiceInputSection(
             Text(
                 text = "Speak Command"
             )
+        }
+
+        val confirmation =
+            pendingConfirmation
+
+        if (
+            requestState ==
+            VoiceRequestState.CONFIRMATION_REQUIRED &&
+            confirmation != null
+        ) {
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        12.dp
+                    )
+            )
+
+            Text(
+                text =
+                    "Confirm sensitive command: " +
+                        confirmation.command.command,
+                style =
+                    MaterialTheme.typography.bodyMedium
+            )
+
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        8.dp
+                    )
+            )
+
+            Button(
+                onClick = {
+                    pendingConfirmation =
+                        null
+
+                    requestState =
+                        VoiceRequestState.DISPATCHING
+
+                    dispatcher.confirmSensitiveCommand(
+                        confirmation =
+                            confirmation,
+                        onResult = { result ->
+                            when (result) {
+                                is CarCommandDispatchResult.Submitted -> {
+                                    activeRequest =
+                                        result.request
+
+                                    requestState =
+                                        VoiceRequestState.SUBMITTED
+                                }
+
+                                is CarCommandDispatchResult.ConfirmationRequired -> {
+                                    pendingConfirmation =
+                                        result
+
+                                    requestState =
+                                        VoiceRequestState.CONFIRMATION_REQUIRED
+                                }
+
+                                is CarCommandDispatchResult.Rejected -> {
+                                    rejectionReason =
+                                        dispatchRejectionText(
+                                            result.reason
+                                        )
+
+                                    requestState =
+                                        VoiceRequestState.REJECTED
+                                }
+
+                                is CarCommandDispatchResult.Failed -> {
+                                    failureMessage =
+                                        result.message
+
+                                    requestState =
+                                        VoiceRequestState.FAILED
+                                }
+                            }
+                        }
+                    )
+                }
+            ) {
+                Text(
+                    text =
+                        "Confirm Command"
+                )
+            }
+
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        8.dp
+                    )
+            )
+
+            Button(
+                onClick = {
+                    val cancelled =
+                        dispatcher.cancelSensitiveCommand(
+                            confirmation =
+                                confirmation
+                        )
+
+                    pendingConfirmation =
+                        null
+
+                    rejectionReason =
+                        if (cancelled) {
+                            "sensitive command cancelled before transmission"
+                        } else {
+                            "confirmation was no longer valid"
+                        }
+
+                    requestState =
+                        VoiceRequestState.REJECTED
+                }
+            ) {
+                Text(
+                    text =
+                        "Cancel Command"
+                )
+            }
         }
 
         Spacer(
@@ -534,6 +693,10 @@ private fun voiceRequestStatusText(
             "Validating and transmitting request"
         }
 
+        VoiceRequestState.CONFIRMATION_REQUIRED -> {
+            "Confirmation required before transmission"
+        }
+
         VoiceRequestState.REJECTED -> {
             "Request rejected: " +
                 (
@@ -581,6 +744,10 @@ private fun voiceTransportStatusText(
 
         VoiceRequestState.DISPATCHING -> {
             return "Transport: Preparing command request"
+        }
+
+        VoiceRequestState.CONFIRMATION_REQUIRED -> {
+            return "Transport: Awaiting confirmation; no command transmitted"
         }
 
         VoiceRequestState.REJECTED -> {
