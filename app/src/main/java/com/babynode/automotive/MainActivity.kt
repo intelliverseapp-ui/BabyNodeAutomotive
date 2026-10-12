@@ -877,9 +877,7 @@ class MainActivity : ComponentActivity() {
                                     "Bluetooth connection established"
                                 )
 
-                                dispatcher.sendModuleConfig(
-                                    moduleJsonId =
-                                        selectedModule.jsonId,
+                                dispatcher.sendProtocolHandshake(
                                     onResult = { result ->
                                         if (
                                             result is
@@ -926,7 +924,40 @@ class MainActivity : ComponentActivity() {
                             }
 
                             is CarStatusEvent.CommandResponse -> {
-                                // No connection-state action required.
+                                if (
+                                    event.command.command ==
+                                    "protocol.handshake" &&
+                                    event.status.equals(
+                                        "ok",
+                                        ignoreCase = true
+                                    )
+                                ) {
+                                    Log.i(
+                                        TAG,
+                                        "Protocol handshake acknowledged"
+                                    )
+
+                                    dispatcher.sendModuleConfig(
+                                        moduleJsonId =
+                                            selectedModule.jsonId,
+                                        onResult = { result ->
+                                            if (
+                                                result is
+                                                CarCommandDispatchResult.Submitted
+                                            ) {
+                                                statusBus
+                                                    .latestEvent
+                                                    .value
+                                                    ?.let { latestEvent ->
+                                                        dispatcher
+                                                            .acceptTransportEvent(
+                                                                latestEvent
+                                                            )
+                                                    }
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         }
                     }

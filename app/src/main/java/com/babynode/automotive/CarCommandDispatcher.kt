@@ -51,6 +51,14 @@ class CarCommandDispatcher(
 ) {
 
     @Volatile
+    private var pendingProtocolHandshakeRequest:
+        CarCommandRequest? = null
+
+    @Volatile
+    private var protocolHandshakeReady =
+        false
+
+    @Volatile
     private var pendingModuleConfigRequest:
         CarCommandRequest? = null
 
@@ -61,6 +69,9 @@ class CarCommandDispatcher(
     companion object {
         private const val TAG =
             "CarCommandDispatcher"
+
+        private const val PROTOCOL_HANDSHAKE_COMMAND =
+            "protocol.handshake"
 
         private const val MODULE_CONFIG_COMMAND =
             "config.module"
@@ -91,6 +102,62 @@ class CarCommandDispatcher(
     }
 
     /**
+     * Sends the protocol handshake required before module
+     * configuration.
+     */
+    fun sendProtocolHandshake(
+        onResult:
+            (CarCommandDispatchResult) -> Unit = {}
+    ) {
+        protocolHandshakeReady =
+            false
+
+        pendingProtocolHandshakeRequest =
+            null
+
+        moduleConfigurationReady =
+            false
+
+        pendingModuleConfigRequest =
+            null
+
+        scope.launch {
+            try {
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                PROTOCOL_HANDSHAKE_COMMAND
+                        )
+                    )
+
+                pendingProtocolHandshakeRequest =
+                    request
+
+                onResult(
+                    CarCommandDispatchResult.Submitted(
+                        request =
+                            request
+                    )
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onResult(
+                    CarCommandDispatchResult.Failed(
+                        message =
+                            "Protocol handshake request failed: " +
+                                (
+                                    e.message
+                                        ?: e.javaClass.simpleName
+                                )
+                    )
+                )
+            }
+        }
+    }
+
+    /**
      * Sends the selected BabyNodeCAN module configuration.
      *
      * This is an internal protocol request. Its returned request ID
@@ -102,6 +169,22 @@ class CarCommandDispatcher(
         onResult:
             (CarCommandDispatchResult) -> Unit = {}
     ) {
+        if (!protocolHandshakeReady) {
+            Log.w(
+                TAG,
+                "Module configuration rejected before protocol handshake"
+            )
+
+            onResult(
+                CarCommandDispatchResult.Rejected(
+                    reason =
+                        "protocol_handshake_required"
+                )
+            )
+
+            return
+        }
+
         moduleConfigurationReady =
             false
 
@@ -198,6 +281,12 @@ class CarCommandDispatcher(
         event: CarStatusEvent
     ) {
         if (event is CarStatusEvent.Disconnected) {
+            protocolHandshakeReady =
+                false
+
+            pendingProtocolHandshakeRequest =
+                null
+
             moduleConfigurationReady =
                 false
 
@@ -207,17 +296,39 @@ class CarCommandDispatcher(
             return
         }
 
-        val pendingRequest =
+        val handshakeRequest =
+            pendingProtocolHandshakeRequest
+
+        val moduleRequest =
             pendingModuleConfigRequest
-                ?: return
 
         when (event) {
             is CarStatusEvent.CommandResponse -> {
                 if (
+                    handshakeRequest != null &&
                     event.requestId ==
-                    pendingRequest.requestId &&
+                    handshakeRequest.requestId &&
                     event.command ==
-                    pendingRequest.command
+                    handshakeRequest.command
+                ) {
+                    protocolHandshakeReady =
+                        event.status.equals(
+                            "ok",
+                            ignoreCase = true
+                        )
+
+                    pendingProtocolHandshakeRequest =
+                        null
+
+                    return
+                }
+
+                if (
+                    moduleRequest != null &&
+                    event.requestId ==
+                    moduleRequest.requestId &&
+                    event.command ==
+                    moduleRequest.command
                 ) {
                     moduleConfigurationReady =
                         event.status.equals(
@@ -232,10 +343,27 @@ class CarCommandDispatcher(
 
             is CarStatusEvent.Error -> {
                 if (
+                    handshakeRequest != null &&
                     event.requestId ==
-                    pendingRequest.requestId &&
+                    handshakeRequest.requestId &&
                     event.command ==
-                    pendingRequest.command
+                    handshakeRequest.command
+                ) {
+                    protocolHandshakeReady =
+                        false
+
+                    pendingProtocolHandshakeRequest =
+                        null
+
+                    return
+                }
+
+                if (
+                    moduleRequest != null &&
+                    event.requestId ==
+                    moduleRequest.requestId &&
+                    event.command ==
+                    moduleRequest.command
                 ) {
                     moduleConfigurationReady =
                         false
@@ -246,13 +374,13 @@ class CarCommandDispatcher(
             }
 
             is CarStatusEvent.Disconnected -> {
-                // Handled before pending-request lookup.
+                // Handled above.
             }
 
             is CarStatusEvent.DeviceApprovalRequired,
             is CarStatusEvent.Connected,
             is CarStatusEvent.CommandSent -> {
-                // No configuration-state transition.
+                // No protocol-state transition.
             }
         }
     }

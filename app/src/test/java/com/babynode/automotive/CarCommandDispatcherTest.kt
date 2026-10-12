@@ -10,6 +10,102 @@ import org.junit.Test
 
 class CarCommandDispatcherTest {
 
+
+
+    @Test
+    fun moduleConfigurationIsBlockedBeforeHandshakeAcknowledgment() {
+        val transport =
+            FakeTransport()
+
+        val dispatcher =
+            createDispatcher(
+                transport
+            )
+
+        var result:
+            CarCommandDispatchResult? =
+            null
+
+        dispatcher.sendModuleConfig(
+            moduleJsonId =
+                "single",
+            onResult = {
+                result =
+                    it
+            }
+        )
+
+        assertEquals(
+            "protocol_handshake_required",
+            (
+                result as
+                    CarCommandDispatchResult.Rejected
+                ).reason
+        )
+
+        assertTrue(
+            transport.sentCommands.isEmpty()
+        )
+    }
+
+    @Test
+    fun handshakeMustBeAcknowledgedBeforeModuleConfiguration() {
+        val transport =
+            FakeTransport()
+
+        val dispatcher =
+            createDispatcher(
+                transport
+            )
+
+        val handshakeRequest =
+            submitHandshake(
+                dispatcher =
+                    dispatcher
+            )
+
+        dispatcher.acceptTransportEvent(
+            CarStatusEvent.CommandResponse(
+                requestId =
+                    handshakeRequest.requestId,
+                command =
+                    handshakeRequest.command,
+                status =
+                    "ok"
+            )
+        )
+
+        var configurationResult:
+            CarCommandDispatchResult? =
+            null
+
+        dispatcher.sendModuleConfig(
+            moduleJsonId =
+                "single",
+            onResult = {
+                configurationResult =
+                    it
+            }
+        )
+
+        assertTrue(
+            configurationResult is
+                CarCommandDispatchResult.Submitted
+        )
+
+        assertEquals(
+            listOf(
+                "protocol.handshake",
+                "config.module"
+            ),
+            transport
+                .sentCommands
+                .map {
+                    it.command
+                }
+        )
+    }
+
     @Test
     fun commandIsBlockedBeforeModuleAcknowledgment() {
         val transport = FakeTransport()
@@ -186,9 +282,47 @@ class CarCommandDispatcherTest {
         )
     }
 
+
+    private fun submitHandshake(
+        dispatcher: CarCommandDispatcher
+    ): CarCommandRequest {
+        var result:
+            CarCommandDispatchResult? =
+            null
+
+        dispatcher.sendProtocolHandshake(
+            onResult = {
+                result =
+                    it
+            }
+        )
+
+        return (
+            result as
+                CarCommandDispatchResult.Submitted
+            ).request
+    }
+
     private fun submitConfiguration(
         dispatcher: CarCommandDispatcher
     ): CarCommandRequest {
+        val handshakeRequest =
+            submitHandshake(
+                dispatcher =
+                    dispatcher
+            )
+
+        dispatcher.acceptTransportEvent(
+            CarStatusEvent.CommandResponse(
+                requestId =
+                    handshakeRequest.requestId,
+                command =
+                    handshakeRequest.command,
+                status =
+                    "ok"
+            )
+        )
+
         var result: CarCommandDispatchResult? = null
 
         dispatcher.sendModuleConfig(
