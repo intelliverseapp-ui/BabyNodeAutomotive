@@ -25,6 +25,70 @@ class CarCommandMapTest {
     }
 
     @Test
+    fun explicitQuestionSyntaxCannotBecomeCommands() {
+        val inputs =
+            listOf(
+                "unlock the doors?",
+                "turn headlights on?",
+                "unlock? the doors",
+                "open the trunk??"
+            )
+
+        inputs.forEach { input ->
+            assertEquals(
+                input,
+                CarCommandMap.UNKNOWN_COMMAND,
+                CarCommandMap.map(
+                    input
+                )
+            )
+        }
+    }
+
+    @Test
+    fun quotedCommandsCannotBecomeCommands() {
+        val inputs =
+            listOf(
+                "\"unlock the doors\"",
+                "'open the trunk'",
+                "say \"lock the doors\"",
+                "the phrase 'turn headlights on'"
+            )
+
+        inputs.forEach { input ->
+            assertEquals(
+                input,
+                CarCommandMap.UNKNOWN_COMMAND,
+                CarCommandMap.map(
+                    input
+                )
+            )
+        }
+    }
+
+    @Test
+    fun mentionStyleCommandsCannotBecomeCommands() {
+        val inputs =
+            listOf(
+                "@BabyNode unlock the doors",
+                "BabyNode: open the trunk",
+                "assistant, lock the doors",
+                "tell BabyNode to turn headlights on"
+            )
+
+        inputs.forEach { input ->
+            assertEquals(
+                input,
+                CarCommandMap.UNKNOWN_COMMAND,
+                CarCommandMap.map(
+                    input
+                )
+            )
+        }
+    }
+
+
+    @Test
     fun questionsDoNotBecomeCommands() {
         val inputs = listOf(
             "is the trunk open",

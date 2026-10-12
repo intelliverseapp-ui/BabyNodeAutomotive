@@ -134,6 +134,54 @@ object CarCommandMap {
     // ============================================================
     // TOKENIZATION AND NORMALIZATION
     // ============================================================
+    /**
+     * Rejects syntax that describes, quotes, mentions, or questions
+     * a command rather than expressing one approved imperative.
+     *
+     * This check runs before punctuation normalization so unsafe
+     * syntax cannot be erased into an allowed phrase.
+     */
+    private fun containsDisallowedIntentSyntax(
+        text: String
+    ): Boolean {
+        val trimmedText =
+            text.trim()
+
+        if (trimmedText.isBlank()) {
+            return false
+        }
+
+        if (
+            '?' in trimmedText ||
+            '@' in trimmedText ||
+            '"' in trimmedText ||
+            '“' in trimmedText ||
+            '”' in trimmedText
+        ) {
+            return true
+        }
+
+        val wrappedInSingleQuotes =
+            trimmedText.length >=
+                2 &&
+                (
+                    (
+                        trimmedText.first() ==
+                        '\'' &&
+                        trimmedText.last() ==
+                        '\''
+                    ) ||
+                    (
+                        trimmedText.first() ==
+                        '‘' &&
+                        trimmedText.last() ==
+                        '’'
+                    )
+                )
+
+        return wrappedInSingleQuotes
+    }
+
     private fun normalizeText(
         text: String
     ): String {
@@ -245,6 +293,14 @@ object CarCommandMap {
     fun map(
         text: String
     ): String {
+        if (
+            containsDisallowedIntentSyntax(
+                text
+            )
+        ) {
+            return UNKNOWN_COMMAND
+        }
+
         val normalizedText =
             normalizeText(
                 text
