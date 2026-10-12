@@ -33,7 +33,10 @@ import java.util.concurrent.atomic.AtomicLong
 class CarCanBusBluetooth(
     private val connectionFactory:
         RfcommConnectionFactory =
-        AndroidRfcommConnectionFactory
+        AndroidRfcommConnectionFactory,
+    private val responseTimeoutMillis:
+        Long =
+        RESPONSE_TIMEOUT_MILLIS
 ) : CarCanTransport {
 
     companion object {
@@ -63,6 +66,15 @@ class CarCanBusBluetooth(
         BabyNodeApp
             .instance
             .allocateTransportSessionGeneration()
+
+    init {
+        require(
+            responseTimeoutMillis >
+                0L
+        ) {
+            "Response timeout must be positive"
+        }
+    }
 
     private data class PendingCommand(
         val request: CarCommandRequest,
@@ -1001,7 +1013,7 @@ class CarCanBusBluetooth(
         transportScope.launch {
             try {
                 withTimeout(
-                    RESPONSE_TIMEOUT_MILLIS
+                    responseTimeoutMillis
                 ) {
                     pendingCommand
                         .responseReceived

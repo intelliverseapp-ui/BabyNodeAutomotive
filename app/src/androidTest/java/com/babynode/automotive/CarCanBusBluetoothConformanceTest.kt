@@ -1409,6 +1409,186 @@ class CarCanBusBluetoothConformanceTest {
         }
     }
 
+
+    @Test
+    fun silentPeerProducesOneCorrelatedTimeoutOutcome() =
+        runBlocking {
+            val connection =
+                FlushTriggeredResponseConnection(
+                    responseCopies =
+                        0
+                )
+
+            val transport =
+                CarCanBusBluetooth(
+                    responseTimeoutMillis =
+                        100L
+                )
+
+            val observedEvents =
+                Collections.synchronizedList(
+                    mutableListOf<CarStatusEvent>()
+                )
+
+            val collector =
+                launch(
+                    start =
+                        CoroutineStart.UNDISPATCHED
+                ) {
+                    transport
+                        .status()
+                        .collect { event ->
+                            observedEvents +=
+                                event
+                        }
+                }
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection
+                )
+
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "LOCK_DOORS"
+                        )
+                    )
+
+                withTimeout(
+                    5_000L
+                ) {
+                    while (
+                        observedEvents.none { event ->
+                            event is
+                                CarStatusEvent.Error &&
+                                CarRequestEventMatcher.matches(
+                                    event =
+                                        event,
+                                    request =
+                                        request
+                                )
+                        }
+                    ) {
+                        delay(
+                            10L
+                        )
+                    }
+                }
+
+                delay(
+                    250L
+                )
+
+                val matchingErrors =
+                    observedEvents
+                        .filterIsInstance<
+                            CarStatusEvent.Error
+                        >()
+                        .filter { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+
+                assertEquals(
+                    1,
+                    matchingErrors.size
+                )
+
+                val timeoutError =
+                    matchingErrors.single()
+
+                assertTrue(
+                    timeoutError.message.contains(
+                        "outcome unknown",
+                        ignoreCase =
+                            true
+                    )
+                )
+
+                assertTrue(
+                    timeoutError.message.contains(
+                        "may have executed",
+                        ignoreCase =
+                            true
+                    )
+                )
+
+                assertEquals(
+                    request.sessionGeneration,
+                    timeoutError.sessionGeneration
+                )
+
+                assertEquals(
+                    request.requestId,
+                    timeoutError.requestId
+                )
+
+                assertEquals(
+                    request.command,
+                    timeoutError.command
+                )
+
+                assertTrue(
+                    observedEvents.any { event ->
+                        event is
+                            CarStatusEvent.CommandSent &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+                )
+
+                assertFalse(
+                    observedEvents.any { event ->
+                        event is
+                            CarStatusEvent.CommandResponse &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+                )
+
+                assertEquals(
+                    timeoutError,
+                    CarRequestEventMatcher.selectBest(
+                        events =
+                            observedEvents.toList(),
+                        request =
+                            request
+                    )
+                )
+
+                assertFalse(
+                    transport
+                        .close()
+                        .any { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+                )
+            } finally {
+                collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
     private class FlushTriggeredResponseConnection(
         private val responseCommand:
             String =
