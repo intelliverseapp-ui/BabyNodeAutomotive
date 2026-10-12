@@ -153,17 +153,12 @@ class CarStatusBus {
     fun latestEventFor(
         request: CarCommandRequest
     ): CarStatusEvent? {
-        return _events
-            .value
-            .asReversed()
-            .firstOrNull { event ->
-                CarRequestEventMatcher.matches(
-                    event =
-                        event,
-                    request =
-                        request
-                )
-            }
+        return CarRequestEventMatcher.selectBest(
+            events =
+                _events.value,
+            request =
+                request
+        )
     }
 
     /**

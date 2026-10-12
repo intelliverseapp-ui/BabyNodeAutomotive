@@ -106,16 +106,12 @@ fun CommandTestSection(
 
         if (currentRequest != null) {
             transportStatusForCurrentRequest =
-                eventHistory
-                    .asReversed()
-                    .firstOrNull { event ->
-                        CarRequestEventMatcher.matches(
-                            event =
-                                event,
-                            request =
-                                currentRequest
-                        )
-                    }
+                CarRequestEventMatcher.selectBest(
+                    events =
+                        eventHistory,
+                    request =
+                        currentRequest
+                )
         }
     }
 

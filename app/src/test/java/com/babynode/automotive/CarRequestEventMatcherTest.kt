@@ -1,5 +1,6 @@
 package com.babynode.automotive
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -56,6 +57,138 @@ class CarRequestEventMatcherTest {
             )
         }
     }
+
+    @Test
+    fun terminalResponseOutranksLaterCommandSent() {
+        val response =
+            CarStatusEvent.CommandResponse(
+                requestId =
+                    request.requestId,
+                command =
+                    request.command,
+                status =
+                    "ok"
+            )
+
+        val sent =
+            CarStatusEvent.CommandSent(
+                requestId =
+                    request.requestId,
+                command =
+                    request.command
+            )
+
+        assertEquals(
+            response,
+            CarRequestEventMatcher.selectBest(
+                events =
+                    listOf(
+                        response,
+                        sent
+                    ),
+                request =
+                    request
+            )
+        )
+    }
+
+    @Test
+    fun terminalErrorOutranksLaterCommandSent() {
+        val error =
+            CarStatusEvent.Error(
+                message =
+                    "Response timeout: outcome unknown",
+                requestId =
+                    request.requestId,
+                command =
+                    request.command
+            )
+
+        val sent =
+            CarStatusEvent.CommandSent(
+                requestId =
+                    request.requestId,
+                command =
+                    request.command
+            )
+
+        assertEquals(
+            error,
+            CarRequestEventMatcher.selectBest(
+                events =
+                    listOf(
+                        error,
+                        sent
+                    ),
+                request =
+                    request
+            )
+        )
+    }
+
+    @Test
+    fun newestTerminalOutcomeWinsAmongTerminalEvents() {
+        val olderResponse =
+            CarStatusEvent.CommandResponse(
+                requestId =
+                    request.requestId,
+                command =
+                    request.command,
+                status =
+                    "ok"
+            )
+
+        val newerError =
+            CarStatusEvent.Error(
+                message =
+                    "Connection closed: outcome unknown",
+                requestId =
+                    request.requestId,
+                command =
+                    request.command
+            )
+
+        assertEquals(
+            newerError,
+            CarRequestEventMatcher.selectBest(
+                events =
+                    listOf(
+                        olderResponse,
+                        newerError
+                    ),
+                request =
+                    request
+            )
+        )
+    }
+
+    @Test
+    fun commandSentIsReturnedWithoutTerminalOutcome() {
+        val sent =
+            CarStatusEvent.CommandSent(
+                requestId =
+                    request.requestId,
+                command =
+                    request.command
+            )
+
+        assertEquals(
+            sent,
+            CarRequestEventMatcher.selectBest(
+                events =
+                    listOf(
+                        CarStatusEvent.Connected(
+                            transportName =
+                                "Bluetooth"
+                        ),
+                        sent
+                    ),
+                request =
+                    request
+            )
+        )
+    }
+
 
     @Test
     fun rejectsDifferentRequestIdentity() {

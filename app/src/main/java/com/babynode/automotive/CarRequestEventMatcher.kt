@@ -6,6 +6,36 @@ package com.babynode.automotive
  */
 object CarRequestEventMatcher {
 
+    /**
+     * Selects the strongest matching event for one request.
+     *
+     * Terminal responses and request-specific errors always outrank
+     * nonterminal CommandSent events. Among events of equal priority,
+     * the newest event wins.
+     */
+    fun selectBest(
+        events: List<CarStatusEvent>,
+        request: CarCommandRequest
+    ): CarStatusEvent? {
+        val matchingEvents =
+            events.filter { event ->
+                matches(
+                    event =
+                        event,
+                    request =
+                        request
+                )
+            }
+
+        return matchingEvents
+            .asReversed()
+            .firstOrNull { event ->
+                event is CarStatusEvent.CommandResponse ||
+                    event is CarStatusEvent.Error
+            }
+            ?: matchingEvents.lastOrNull()
+    }
+
     fun matches(
         event: CarStatusEvent,
         request: CarCommandRequest
