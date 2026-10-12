@@ -49,14 +49,6 @@ class CarCanBusBluetooth : CarCanTransport {
         private const val MAXIMUM_FRAME_LENGTH =
             4_096
 
-        private val VALID_RESPONSE_STATUSES =
-            setOf(
-                "ok",
-                "error",
-                "failed",
-                "unsupported"
-            )
-
         private val SPP_UUID: UUID =
             UUID.fromString(
                 "00001101-0000-1000-8000-00805F9B34FB"
@@ -856,7 +848,7 @@ class CarCanBusBluetooth : CarCanTransport {
                             ) ?: break
 
                         val packet =
-                            frame.trim()
+                            frame
 
                         if (packet.isEmpty()) {
                             continue
@@ -988,10 +980,8 @@ class CarCanBusBluetooth : CarCanTransport {
                 )
 
             if (
-                typeValue !is String ||
-                !typeValue.equals(
-                    "response",
-                    ignoreCase = true
+                !BabyNodeProtocol.validateResponseType(
+                    typeValue
                 )
             ) {
                 Log.w(
@@ -1060,7 +1050,7 @@ class CarCanBusBluetooth : CarCanTransport {
             }
 
             val responseCommand =
-                commandValue.trim()
+                commandValue
 
             val statusValue =
                 json.opt(
@@ -1080,12 +1070,11 @@ class CarCanBusBluetooth : CarCanTransport {
 
             val responseStatus =
                 statusValue
-                    .trim()
-                    .lowercase()
 
             if (
-                responseStatus !in
-                VALID_RESPONSE_STATUSES
+                !BabyNodeProtocol.validateResponseStatus(
+                    responseStatus
+                )
             ) {
                 Log.w(
                     TAG,
@@ -1101,9 +1090,9 @@ class CarCanBusBluetooth : CarCanTransport {
                 )
 
             if (
-                reasonValue != null &&
-                reasonValue !== JSONObject.NULL &&
-                reasonValue !is String
+                !BabyNodeProtocol.validateResponseReason(
+                    reasonValue
+                )
             ) {
                 Log.w(
                     TAG,
@@ -1115,7 +1104,7 @@ class CarCanBusBluetooth : CarCanTransport {
 
             val reason =
                 if (reasonValue is String) {
-                    reasonValue.trim()
+                    reasonValue
                 } else {
                     ""
                 }
@@ -1142,9 +1131,11 @@ class CarCanBusBluetooth : CarCanTransport {
                 request.command.command
 
             if (
-                !responseCommand.equals(
-                    expectedCommand,
-                    ignoreCase = true
+                !BabyNodeProtocol.validateResponseCommand(
+                    command =
+                        responseCommand,
+                    expectedCommand =
+                        expectedCommand
                 )
             ) {
                 val removed =

@@ -220,4 +220,117 @@ class BabyNodeProtocolTest {
         )
     }
 
+
+    @Test
+    fun acceptsExactResponseFields() {
+        assertTrue(
+            BabyNodeProtocol.validateResponseType(
+                "response"
+            )
+        )
+
+        assertTrue(
+            BabyNodeProtocol.validateResponseStatus(
+                "ok"
+            )
+        )
+
+        assertTrue(
+            BabyNodeProtocol.validateResponseCommand(
+                command =
+                    "protocol.handshake",
+                expectedCommand =
+                    "protocol.handshake"
+            )
+        )
+    }
+
+    @Test
+    fun rejectsNormalizedResponseType() {
+        assertFalse(
+            BabyNodeProtocol.validateResponseType(
+                "Response"
+            )
+        )
+    }
+
+    @Test
+    fun rejectsPaddedResponseStatus() {
+        assertFalse(
+            BabyNodeProtocol.validateResponseStatus(
+                " ok "
+            )
+        )
+    }
+
+    @Test
+    fun rejectsUnsupportedFailedStatus() {
+        assertFalse(
+            BabyNodeProtocol.validateResponseStatus(
+                "failed"
+            )
+        )
+    }
+
+    @Test
+    fun rejectsCaseChangedResponseCommand() {
+        assertFalse(
+            BabyNodeProtocol.validateResponseCommand(
+                command =
+                    "PROTOCOL.HANDSHAKE",
+                expectedCommand =
+                    "protocol.handshake"
+            )
+        )
+    }
+
+    @Test
+    fun rejectsPaddedResponseCommand() {
+        assertFalse(
+            BabyNodeProtocol.validateResponseCommand(
+                command =
+                    " protocol.handshake ",
+                expectedCommand =
+                    "protocol.handshake"
+            )
+        )
+    }
+
+
+    @Test
+    fun acceptsMissingOrBoundedResponseReason() {
+        assertTrue(
+            BabyNodeProtocol.validateResponseReason(
+                null
+            )
+        )
+
+        assertTrue(
+            BabyNodeProtocol.validateResponseReason(
+                "not_implemented"
+            )
+        )
+    }
+
+    @Test
+    fun rejectsOversizedResponseReason() {
+        assertFalse(
+            BabyNodeProtocol.validateResponseReason(
+                "x".repeat(
+                    BabyNodeProtocol.MAX_REASON_LENGTH +
+                        1
+                )
+            )
+        )
+    }
+
+    @Test
+    fun rejectsResponseReasonWithControlCharacters() {
+        assertFalse(
+            BabyNodeProtocol.validateResponseReason(
+                "invalid\nreason"
+            )
+        )
+    }
+
 }

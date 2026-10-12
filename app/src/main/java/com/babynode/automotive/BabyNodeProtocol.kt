@@ -73,6 +73,63 @@ object BabyNodeProtocol {
             vehicleCommands == "stub_only"
     }
 
+    const val MAX_REASON_LENGTH =
+        256
+
+    fun validateResponseReason(
+        reason: Any?
+    ): Boolean {
+        if (
+            reason == null ||
+            reason === org.json.JSONObject.NULL
+        ) {
+            return true
+        }
+
+        if (reason !is String) {
+            return false
+        }
+
+        if (reason.length > MAX_REASON_LENGTH) {
+            return false
+        }
+
+        return reason.none {
+            character ->
+            character.code < 0x20 ||
+                character.code == 0x7F
+        }
+    }
+
+    private val VALID_RESPONSE_STATUSES =
+        setOf(
+            "ok",
+            "error",
+            "unsupported"
+        )
+
+    fun validateResponseType(
+        type: Any?
+    ): Boolean {
+        return type is String &&
+            type == "response"
+    }
+
+    fun validateResponseStatus(
+        status: Any?
+    ): Boolean {
+        return status is String &&
+            status in VALID_RESPONSE_STATUSES
+    }
+
+    fun validateResponseCommand(
+        command: Any?,
+        expectedCommand: String
+    ): Boolean {
+        return command is String &&
+            command == expectedCommand
+    }
+
     fun validateVersion(
         version: Any?
     ): Boolean {
