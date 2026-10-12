@@ -103,6 +103,9 @@ class MainActivity : ComponentActivity() {
     private var reconnectAttempt =
         0
 
+    private var deviceApprovalPending =
+        false
+
     private val bluetoothPermissionLauncher =
         registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
@@ -271,6 +274,51 @@ class MainActivity : ComponentActivity() {
                                     }
                                 )
                             }
+                        },
+                        onApproveDevice = { address ->
+                            val stored =
+                                BabyNodeApp
+                                    .instance
+                                    .approveBabyNodeCanAddress(
+                                        address
+                                    )
+
+                            if (stored) {
+                                deviceApprovalPending =
+                                    false
+
+                                statusBus
+                                    .resetForTransportReplacement()
+
+                                connectCurrentTransport()
+                            } else {
+                                statusBus.accept(
+                                    CarStatusEvent.Error(
+                                        message =
+                                            "BabyNodeCAN identity " +
+                                                "could not be stored"
+                                    )
+                                )
+                            }
+                        },
+                        onForgetDevice = {
+                            BabyNodeApp
+                                .instance
+                                .clearApprovedBabyNodeCanAddress()
+
+                            deviceApprovalPending =
+                                false
+
+                            replaceTransport(
+                                module =
+                                    currentModule,
+                                onDispatcherReplaced = {
+                                    replacementDispatcher ->
+
+                                    currentDispatcher =
+                                        replacementDispatcher
+                                }
+                            )
                         }
                     )
                 }
@@ -331,6 +379,9 @@ class MainActivity : ComponentActivity() {
     ) {
         intentionalTransportReplacement =
             true
+
+        deviceApprovalPending =
+            false
 
         reconnectJob?.cancel()
         reconnectJob =
@@ -527,6 +578,7 @@ class MainActivity : ComponentActivity() {
 
                 if (
                     !activityIsDestroying &&
+                    !deviceApprovalPending &&
                     activeTransport === transport &&
                     statusBus.connectionState.value
                         !is CarConnectionState.Connected
@@ -799,7 +851,24 @@ class MainActivity : ComponentActivity() {
                         )
 
                         when (event) {
+                            is CarStatusEvent.DeviceApprovalRequired -> {
+                                deviceApprovalPending =
+                                    true
+
+                                reconnectJob?.cancel()
+                                reconnectJob =
+                                    null
+
+                                Log.i(
+                                    TAG,
+                                    "BabyNodeCAN device approval required"
+                                )
+                            }
+
                             is CarStatusEvent.Connected -> {
+                                deviceApprovalPending =
+                                    false
+
                                 reconnectAttempt =
                                     0
 

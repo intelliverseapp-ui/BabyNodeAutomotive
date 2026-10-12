@@ -87,6 +87,16 @@ interface CarCanTransport {
 sealed interface CarStatusEvent {
 
     /**
+     * A uniquely named, bonded BabyNodeCAN candidate was found,
+     * but the user has not explicitly approved its Bluetooth
+     * identity yet.
+     */
+    data class DeviceApprovalRequired(
+        val deviceName: String,
+        val deviceAddress: String
+    ) : CarStatusEvent
+
+    /**
      * The transport established a usable connection.
      */
     data class Connected(

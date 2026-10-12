@@ -404,31 +404,22 @@ class CarCanBusBluetooth : CarCanTransport {
         val uniquelyMatchedDevice =
             matchingDevices.single()
 
-        val identityStored =
-            BabyNodeApp
-                .instance
-                .approveBabyNodeCanAddress(
-                    uniquelyMatchedDevice.address
-                )
-
-        if (!identityStored) {
-            statusFlow.emit(
-                CarStatusEvent.Error(
-                    message =
-                        "BabyNodeCAN Bluetooth identity " +
-                            "could not be stored"
-                )
-            )
-
-            return null
-        }
-
         Log.i(
             TAG,
-            "Unique BabyNodeCAN identity approved and stored"
+            "Explicit approval required for BabyNodeCAN identity"
         )
 
-        return uniquelyMatchedDevice
+        statusFlow.emit(
+            CarStatusEvent.DeviceApprovalRequired(
+                deviceName =
+                    uniquelyMatchedDevice.name
+                        ?: DEVICE_NAME,
+                deviceAddress =
+                    uniquelyMatchedDevice.address
+            )
+        )
+
+        return null
     }
 
     override suspend fun disconnect() {

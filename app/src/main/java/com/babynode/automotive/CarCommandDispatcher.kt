@@ -249,6 +249,7 @@ class CarCommandDispatcher(
                 // Handled before pending-request lookup.
             }
 
+            is CarStatusEvent.DeviceApprovalRequired,
             is CarStatusEvent.Connected,
             is CarStatusEvent.CommandSent -> {
                 // No configuration-state transition.

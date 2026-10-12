@@ -25,7 +25,9 @@ fun AutomotiveScreen(
     status: CarStatusEvent?,
     eventHistory: List<CarStatusEvent>,
     modifier: Modifier = Modifier,
-    onModuleSelected: (ModuleType) -> Unit = {}
+    onModuleSelected: (ModuleType) -> Unit = {},
+    onApproveDevice: (String) -> Unit = {},
+    onForgetDevice: () -> Unit = {}
 ) {
     Log.i(TAG, "Render AutomotiveScreen(): moduleType=${moduleType.uiLabel}")
 
@@ -129,6 +131,95 @@ fun AutomotiveScreen(
             text = connectionText,
             style = MaterialTheme.typography.bodyMedium
         )
+
+        val approvalRequest =
+            status as?
+                CarStatusEvent.DeviceApprovalRequired
+
+        if (approvalRequest != null) {
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        16.dp
+                    )
+            )
+
+            Surface(
+                tonalElevation =
+                    2.dp,
+                shape =
+                    MaterialTheme.shapes.medium,
+                modifier =
+                    Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier =
+                        Modifier.padding(
+                            16.dp
+                        )
+                ) {
+                    Text(
+                        text =
+                            "Approve BabyNodeCAN",
+                        style =
+                            MaterialTheme.typography.titleMedium
+                    )
+
+                    Spacer(
+                        modifier =
+                            Modifier.height(
+                                8.dp
+                            )
+                    )
+
+                    Text(
+                        text =
+                            approvalRequest.deviceName +
+                                "\n" +
+                                approvalRequest.deviceAddress,
+                        style =
+                            MaterialTheme.typography.bodyMedium
+                    )
+
+                    Spacer(
+                        modifier =
+                            Modifier.height(
+                                12.dp
+                            )
+                    )
+
+                    Button(
+                        onClick = {
+                            onApproveDevice(
+                                approvalRequest.deviceAddress
+                            )
+                        }
+                    ) {
+                        Text(
+                            text =
+                                "Approve and Connect"
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(
+            modifier =
+                Modifier.height(
+                    12.dp
+                )
+        )
+
+        OutlinedButton(
+            onClick =
+                onForgetDevice
+        ) {
+            Text(
+                text =
+                    "Forget approved BabyNodeCAN"
+            )
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
 

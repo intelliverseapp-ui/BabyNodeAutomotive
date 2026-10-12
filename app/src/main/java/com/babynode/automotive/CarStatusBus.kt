@@ -97,6 +97,15 @@ class CarStatusBus {
         }
 
         when (event) {
+            is CarStatusEvent.DeviceApprovalRequired -> {
+                /*
+                 * Approval is required before a Bluetooth connection
+                 * can be established. Preserve the event for the UI.
+                 */
+                _connectionState.value =
+                    CarConnectionState.Disconnected
+            }
+
             is CarStatusEvent.Connected -> {
                 _connectionState.value =
                     CarConnectionState.Connected(
@@ -170,6 +179,7 @@ class CarStatusBus {
                             request.command
                     }
 
+                    is CarStatusEvent.DeviceApprovalRequired,
                     is CarStatusEvent.Connected,
                     is CarStatusEvent.Disconnected -> {
                         false

@@ -74,6 +74,10 @@ fun CanDebugSection(
 private fun CarStatusEvent.toLogLine(): String =
     when (this) {
 
+        is CarStatusEvent.DeviceApprovalRequired ->
+            "DEVICE APPROVAL REQUIRED: " +
+                "$deviceName [$deviceAddress]"
+
         is CarStatusEvent.Connected ->
             "CONNECTED: $transportName"
 

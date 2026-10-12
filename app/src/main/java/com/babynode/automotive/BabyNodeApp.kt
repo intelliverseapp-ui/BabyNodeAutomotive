@@ -62,15 +62,13 @@ class BabyNodeApp : Application() {
             return false
         }
 
-        preferences
+        return preferences
             .edit()
             .putString(
                 KEY_APPROVED_BABYNODECAN_ADDRESS,
                 normalizedAddress
             )
-            .apply()
-
-        return true
+            .commit()
     }
 
     /**

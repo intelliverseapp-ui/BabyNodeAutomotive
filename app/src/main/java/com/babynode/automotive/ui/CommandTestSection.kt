@@ -439,10 +439,8 @@ private fun eventMatchesTypedRequest(
                 request.command
         }
 
-        is CarStatusEvent.Connected -> {
-            false
-        }
-
+        is CarStatusEvent.DeviceApprovalRequired,
+        is CarStatusEvent.Connected,
         is CarStatusEvent.Disconnected -> {
             false
         }
@@ -599,6 +597,7 @@ private fun typedTransportStatusText(
                 " (id=${request.requestId})"
         }
 
+        is CarStatusEvent.DeviceApprovalRequired,
         is CarStatusEvent.Connected,
         is CarStatusEvent.Disconnected -> {
             /*
