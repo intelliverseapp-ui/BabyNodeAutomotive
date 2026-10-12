@@ -36,6 +36,8 @@ class TerminalOutcomePersistenceTest {
             CarStatusEvent.Error(
                 message =
                     "Transport closed: outcome unknown",
+                sessionGeneration =
+                    1001L,
                 requestId =
                     42L,
                 command =
@@ -67,6 +69,8 @@ class TerminalOutcomePersistenceTest {
             CarStatusEvent.Error(
                 message =
                     "Transport closed: outcome unknown",
+                sessionGeneration =
+                    1002L,
                 requestId =
                     73L,
                 command =

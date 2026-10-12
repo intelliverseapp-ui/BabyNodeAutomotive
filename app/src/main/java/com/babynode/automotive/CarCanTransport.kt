@@ -21,6 +21,7 @@ data class CanonicalCommand(
  * sent, response, timeout, and failure events.
  */
 data class CarCommandRequest(
+    val sessionGeneration: Long = 0L,
     val requestId: Long,
     val command: CanonicalCommand
 )
@@ -135,6 +136,7 @@ sealed interface CarStatusEvent {
     data class Error(
         val message: String,
         val throwable: Throwable? = null,
+        val sessionGeneration: Long? = null,
         val requestId: Long? = null,
         val command: CanonicalCommand? = null
     ) : CarStatusEvent {
@@ -155,6 +157,7 @@ sealed interface CarStatusEvent {
      * occurred.
      */
     data class CommandSent(
+        val sessionGeneration: Long = 0L,
         val requestId: Long,
         val command: CanonicalCommand
     ) : CarStatusEvent
@@ -168,6 +171,7 @@ sealed interface CarStatusEvent {
      * vehicle action completed.
      */
     data class CommandResponse(
+        val sessionGeneration: Long = 0L,
         val requestId: Long,
         val command: CanonicalCommand,
         val status: String

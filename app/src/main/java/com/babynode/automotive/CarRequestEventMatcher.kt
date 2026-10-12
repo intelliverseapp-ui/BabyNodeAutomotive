@@ -42,21 +42,27 @@ object CarRequestEventMatcher {
     ): Boolean {
         return when (event) {
             is CarStatusEvent.CommandSent -> {
-                event.requestId ==
+                event.sessionGeneration ==
+                    request.sessionGeneration &&
+                    event.requestId ==
                     request.requestId &&
                     event.command ==
                     request.command
             }
 
             is CarStatusEvent.CommandResponse -> {
-                event.requestId ==
+                event.sessionGeneration ==
+                    request.sessionGeneration &&
+                    event.requestId ==
                     request.requestId &&
                     event.command ==
                     request.command
             }
 
             is CarStatusEvent.Error -> {
-                event.requestId ==
+                event.sessionGeneration ==
+                    request.sessionGeneration &&
+                    event.requestId ==
                     request.requestId &&
                     event.command ==
                     request.command

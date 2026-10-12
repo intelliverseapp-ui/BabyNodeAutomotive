@@ -248,11 +248,18 @@ fun AutomotiveScreen(
         // Voice Input Section
         // -------------------------------
         Log.i(TAG, "Render VoiceInputSection(): latestEvent=$status")
-        VoiceInputSection(
-            dispatcher = dispatcher,
-            status = status,
-            eventHistory = eventHistory
-        )
+        key(
+            dispatcher
+        ) {
+            VoiceInputSection(
+                dispatcher =
+                    dispatcher,
+                status =
+                    status,
+                eventHistory =
+                    eventHistory
+            )
+        }
 
         if (BuildConfig.DEBUG) {
             Spacer(
@@ -268,14 +275,18 @@ fun AutomotiveScreen(
                 "Render CommandTestSection(): latestEvent=$status"
             )
 
-            CommandTestSection(
-                dispatcher =
-                    dispatcher,
-                status =
-                    status,
-                eventHistory =
-                    eventHistory
-            )
+            key(
+                dispatcher
+            ) {
+                CommandTestSection(
+                    dispatcher =
+                        dispatcher,
+                    status =
+                        status,
+                    eventHistory =
+                        eventHistory
+                )
+            }
 
             Spacer(
                 modifier =

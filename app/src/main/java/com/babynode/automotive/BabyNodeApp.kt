@@ -15,6 +15,58 @@ class BabyNodeApp : Application() {
     }
 
     /**
+     * Allocates a positive transport session generation that remains
+     * unique across transport replacement and process restart.
+     *
+     * Persistence is synchronous so a generation is never returned
+     * before its successor has been durably reserved.
+     */
+    @Synchronized
+    fun allocateTransportSessionGeneration():
+        Long {
+        val storedNextGeneration =
+            preferences.getLong(
+                KEY_NEXT_TRANSPORT_SESSION_GENERATION,
+                1L
+            )
+
+        val allocatedGeneration =
+            storedNextGeneration.takeIf {
+                it > 0L
+            } ?: 1L
+
+        val nextGeneration =
+            if (
+                allocatedGeneration ==
+                Long.MAX_VALUE
+            ) {
+                throw IllegalStateException(
+                    "Transport session generation exhausted"
+                )
+            } else {
+                allocatedGeneration +
+                    1L
+            }
+
+        val persisted =
+            preferences
+                .edit()
+                .putLong(
+                    KEY_NEXT_TRANSPORT_SESSION_GENERATION,
+                    nextGeneration
+                )
+                .commit()
+
+        check(
+            persisted
+        ) {
+            "Transport session generation could not be persisted"
+        }
+
+        return allocatedGeneration
+    }
+
+    /**
      * Returns the Bluetooth address of the BabyNodeCAN device
      * previously approved by this application.
      *
@@ -137,6 +189,10 @@ class BabyNodeApp : Application() {
             JSONArray()
 
         terminalEvents.forEach { event ->
+            val sessionGeneration =
+                event.sessionGeneration
+                    ?: return@forEach
+
             val requestId =
                 event.requestId
                     ?: return@forEach
@@ -150,6 +206,10 @@ class BabyNodeApp : Application() {
                     .put(
                         "message",
                         event.message
+                    )
+                    .put(
+                        "session_generation",
+                        sessionGeneration
                     )
                     .put(
                         "request_id",
@@ -220,6 +280,11 @@ class BabyNodeApp : Application() {
                             index
                         )
 
+                    val sessionGeneration =
+                        encodedEvent.getLong(
+                            "session_generation"
+                        )
+
                     val requestId =
                         encodedEvent.getLong(
                             "request_id"
@@ -259,6 +324,8 @@ class BabyNodeApp : Application() {
                             CarStatusEvent.Error(
                                 message =
                                     message,
+                                sessionGeneration =
+                                    sessionGeneration,
                                 requestId =
                                     requestId,
                                 command =
@@ -326,6 +393,9 @@ class BabyNodeApp : Application() {
 
         private const val KEY_TERMINAL_REQUEST_OUTCOMES =
             "terminal_request_outcomes"
+
+        private const val KEY_NEXT_TRANSPORT_SESSION_GENERATION =
+            "next_transport_session_generation"
 
         private val BLUETOOTH_ADDRESS_PATTERN =
             Regex(

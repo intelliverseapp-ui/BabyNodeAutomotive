@@ -39,6 +39,8 @@ class CarRequestEventMatcherTest {
                 CarStatusEvent.Error(
                     message =
                         "outcome unknown",
+                    sessionGeneration =
+                        request.sessionGeneration,
                     requestId =
                         request.requestId,
                     command =
@@ -57,6 +59,121 @@ class CarRequestEventMatcherTest {
             )
         }
     }
+
+    @Test
+    fun rejectsSameRequestIdAndCommandFromDifferentSession() {
+        val sessionOneRequest =
+            CarCommandRequest(
+                sessionGeneration =
+                    1L,
+                requestId =
+                    42L,
+                command =
+                    CanonicalCommand(
+                        command =
+                            "LOCK_DOORS"
+                    )
+            )
+
+        val sessionTwoResponse =
+            CarStatusEvent.CommandResponse(
+                sessionGeneration =
+                    2L,
+                requestId =
+                    42L,
+                command =
+                    sessionOneRequest.command,
+                status =
+                    "ok"
+            )
+
+        assertFalse(
+            CarRequestEventMatcher.matches(
+                event =
+                    sessionTwoResponse,
+                request =
+                    sessionOneRequest
+            )
+        )
+    }
+
+    @Test
+    fun matchesRequestOnlyWithinSameSession() {
+        val request =
+            CarCommandRequest(
+                sessionGeneration =
+                    7L,
+                requestId =
+                    42L,
+                command =
+                    CanonicalCommand(
+                        command =
+                            "LOCK_DOORS"
+                    )
+            )
+
+        val response =
+            CarStatusEvent.CommandResponse(
+                sessionGeneration =
+                    7L,
+                requestId =
+                    request.requestId,
+                command =
+                    request.command,
+                status =
+                    "ok"
+            )
+
+        assertTrue(
+            CarRequestEventMatcher.matches(
+                event =
+                    response,
+                request =
+                    request
+            )
+        )
+    }
+
+    @Test
+    fun terminalSelectionRejectsOtherSessionEvents() {
+        val request =
+            CarCommandRequest(
+                sessionGeneration =
+                    11L,
+                requestId =
+                    1L,
+                command =
+                    CanonicalCommand(
+                        command =
+                            "HEADLIGHTS_ON"
+                    )
+            )
+
+        val staleResponse =
+            CarStatusEvent.CommandResponse(
+                sessionGeneration =
+                    10L,
+                requestId =
+                    request.requestId,
+                command =
+                    request.command,
+                status =
+                    "ok"
+            )
+
+        assertEquals(
+            null,
+            CarRequestEventMatcher.selectBest(
+                events =
+                    listOf(
+                        staleResponse
+                    ),
+                request =
+                    request
+            )
+        )
+    }
+
 
     @Test
     fun terminalResponseOutranksLaterCommandSent() {
@@ -98,6 +215,8 @@ class CarRequestEventMatcherTest {
             CarStatusEvent.Error(
                 message =
                     "Response timeout: outcome unknown",
+                sessionGeneration =
+                    request.sessionGeneration,
                 requestId =
                     request.requestId,
                 command =
@@ -142,6 +261,8 @@ class CarRequestEventMatcherTest {
             CarStatusEvent.Error(
                 message =
                     "Connection closed: outcome unknown",
+                sessionGeneration =
+                    request.sessionGeneration,
                 requestId =
                     request.requestId,
                 command =

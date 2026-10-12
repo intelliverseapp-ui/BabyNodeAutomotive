@@ -55,6 +55,12 @@ class CarCanBusBluetooth : CarCanTransport {
             )
     }
 
+    val sessionGeneration:
+        Long =
+        BabyNodeApp
+            .instance
+            .allocateTransportSessionGeneration()
+
     private data class PendingCommand(
         val request: CarCommandRequest,
         val responseReceived: CompletableDeferred<Unit>
@@ -457,6 +463,8 @@ class CarCanBusBluetooth : CarCanTransport {
 
         val request =
             CarCommandRequest(
+                sessionGeneration =
+                    sessionGeneration,
                 requestId =
                     messageId,
                 command =
@@ -584,6 +592,8 @@ class CarCanBusBluetooth : CarCanTransport {
 
             statusFlow.emit(
                 CarStatusEvent.CommandSent(
+                    sessionGeneration =
+                        request.sessionGeneration,
                     requestId =
                         messageId,
                     command =
@@ -816,6 +826,8 @@ class CarCanBusBluetooth : CarCanTransport {
                     message,
                 throwable =
                     throwable,
+                sessionGeneration =
+                    request.sessionGeneration,
                 requestId =
                     request.requestId,
                 command =
@@ -1277,6 +1289,8 @@ class CarCanBusBluetooth : CarCanTransport {
 
             statusFlow.emit(
                 CarStatusEvent.CommandResponse(
+                    sessionGeneration =
+                        request.sessionGeneration,
                     requestId =
                         commandId,
                     command =
@@ -1382,6 +1396,8 @@ class CarCanBusBluetooth : CarCanTransport {
                     CarStatusEvent.Error(
                         message =
                             "Transport closed: outcome unknown",
+                        sessionGeneration =
+                            request.sessionGeneration,
                         requestId =
                             request.requestId,
                         command =
