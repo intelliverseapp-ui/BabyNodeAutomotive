@@ -1012,17 +1012,22 @@ class MainActivity : ComponentActivity() {
                                     onResult = { result ->
                                         if (
                                             result is
-                                            CarCommandDispatchResult.Submitted
+                                            CarCommandDispatchResult.Submitted &&
+                                            dispatcher
+                                                .isProtocolHandshakeReady()
                                         ) {
-                                            statusBus
-                                                .latestEvent
-                                                .value
-                                                ?.let { latestEvent ->
-                                                    dispatcher
-                                                        .acceptTransportEvent(
-                                                            latestEvent
-                                                        )
-                                                }
+                                            /*
+                                             * The exact handshake response
+                                             * arrived before sendCommand()
+                                             * returned and was retained by
+                                             * the dispatcher. Start module
+                                             * configuration only after that
+                                             * response has been consumed.
+                                             */
+                                            dispatcher.sendModuleConfig(
+                                                moduleJsonId =
+                                                    selectedModule.jsonId
+                                            )
                                         }
                                     }
                                 )

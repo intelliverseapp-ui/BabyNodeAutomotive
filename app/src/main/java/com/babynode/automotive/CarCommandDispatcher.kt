@@ -75,6 +75,9 @@ class CarCommandDispatcher(
     private var moduleConfigurationReady =
         false
 
+    private val earlyProtocolEvents =
+        mutableListOf<CarStatusEvent>()
+
     @Volatile
     private var pendingSensitiveConfirmation:
         CarCommandDispatchResult.ConfirmationRequired? = null
@@ -88,6 +91,9 @@ class CarCommandDispatcher(
 
         private const val MODULE_CONFIG_COMMAND =
             "config.module"
+
+        private const val MAX_EARLY_PROTOCOL_EVENTS =
+            8
 
         private val SENSITIVE_COMMANDS =
             setOf(
@@ -120,6 +126,16 @@ class CarCommandDispatcher(
             )
     }
 
+    fun isProtocolHandshakeReady():
+        Boolean {
+        return protocolHandshakeReady
+    }
+
+    fun isModuleConfigurationReady():
+        Boolean {
+        return moduleConfigurationReady
+    }
+
     /**
      * Sends the protocol handshake required before module
      * configuration.
@@ -140,6 +156,11 @@ class CarCommandDispatcher(
         pendingModuleConfigRequest =
             null
 
+        clearEarlyProtocolEvents(
+            commandName =
+                PROTOCOL_HANDSHAKE_COMMAND
+        )
+
         scope.launch {
             try {
                 val request =
@@ -152,6 +173,15 @@ class CarCommandDispatcher(
 
                 pendingProtocolHandshakeRequest =
                     request
+
+                consumeEarlyProtocolEvent(
+                    request =
+                        request
+                )?.let { earlyEvent ->
+                    acceptTransportEvent(
+                        earlyEvent
+                    )
+                }
 
                 onResult(
                     CarCommandDispatchResult.Submitted(
@@ -236,6 +266,11 @@ class CarCommandDispatcher(
             return
         }
 
+        clearEarlyProtocolEvents(
+            commandName =
+                MODULE_CONFIG_COMMAND
+        )
+
         scope.launch {
             try {
                 val request =
@@ -256,6 +291,15 @@ class CarCommandDispatcher(
 
                 pendingModuleConfigRequest =
                     request
+
+                consumeEarlyProtocolEvent(
+                    request =
+                        request
+                )?.let { earlyEvent ->
+                    acceptTransportEvent(
+                        earlyEvent
+                    )
+                }
 
                 onResult(
                     CarCommandDispatchResult.Submitted(
@@ -317,6 +361,12 @@ class CarCommandDispatcher(
             pendingSensitiveConfirmation =
                 null
 
+            synchronized(
+                earlyProtocolEvents
+            ) {
+                earlyProtocolEvents.clear()
+            }
+
             return
         }
 
@@ -362,7 +412,13 @@ class CarCommandDispatcher(
 
                     pendingModuleConfigRequest =
                         null
+
+                    return
                 }
+
+                retainEarlyProtocolEvent(
+                    event
+                )
             }
 
             is CarStatusEvent.Error -> {
@@ -394,7 +450,13 @@ class CarCommandDispatcher(
 
                     pendingModuleConfigRequest =
                         null
+
+                    return
                 }
+
+                retainEarlyProtocolEvent(
+                    event
+                )
             }
 
             is CarStatusEvent.Disconnected -> {
@@ -407,6 +469,165 @@ class CarCommandDispatcher(
                 // No protocol-state transition.
             }
         }
+    }
+
+    private fun retainEarlyProtocolEvent(
+        event: CarStatusEvent
+    ) {
+        val commandName =
+            when (event) {
+                is CarStatusEvent.CommandResponse ->
+                    event.command.command
+
+                is CarStatusEvent.Error ->
+                    event.command?.command
+
+                else ->
+                    null
+            }
+
+        if (
+            commandName !=
+            PROTOCOL_HANDSHAKE_COMMAND &&
+            commandName !=
+            MODULE_CONFIG_COMMAND
+        ) {
+            return
+        }
+
+        synchronized(
+            earlyProtocolEvents
+        ) {
+            earlyProtocolEvents.removeAll { existing ->
+                sameProtocolEventIdentity(
+                    first =
+                        existing,
+                    second =
+                        event
+                )
+            }
+
+            earlyProtocolEvents +=
+                event
+
+            while (
+                earlyProtocolEvents.size >
+                MAX_EARLY_PROTOCOL_EVENTS
+            ) {
+                earlyProtocolEvents.removeAt(
+                    0
+                )
+            }
+        }
+    }
+
+    private fun consumeEarlyProtocolEvent(
+        request: CarCommandRequest
+    ): CarStatusEvent? {
+        return synchronized(
+            earlyProtocolEvents
+        ) {
+            val index =
+                earlyProtocolEvents.indexOfFirst { event ->
+                    CarRequestEventMatcher.matches(
+                        event =
+                            event,
+                        request =
+                            request
+                    )
+                }
+
+            if (index >= 0) {
+                earlyProtocolEvents.removeAt(
+                    index
+                )
+            } else {
+                null
+            }
+        }
+    }
+
+    private fun clearEarlyProtocolEvents(
+        commandName: String
+    ) {
+        synchronized(
+            earlyProtocolEvents
+        ) {
+            earlyProtocolEvents.removeAll { event ->
+                when (event) {
+                    is CarStatusEvent.CommandResponse ->
+                        event.command.command ==
+                            commandName
+
+                    is CarStatusEvent.Error ->
+                        event.command?.command ==
+                            commandName
+
+                    else ->
+                        false
+                }
+            }
+        }
+    }
+
+    private fun sameProtocolEventIdentity(
+        first: CarStatusEvent,
+        second: CarStatusEvent
+    ): Boolean {
+        val firstRequestId =
+            when (first) {
+                is CarStatusEvent.CommandResponse ->
+                    first.requestId
+
+                is CarStatusEvent.Error ->
+                    first.requestId
+
+                else ->
+                    null
+            }
+
+        val secondRequestId =
+            when (second) {
+                is CarStatusEvent.CommandResponse ->
+                    second.requestId
+
+                is CarStatusEvent.Error ->
+                    second.requestId
+
+                else ->
+                    null
+            }
+
+        val firstCommand =
+            when (first) {
+                is CarStatusEvent.CommandResponse ->
+                    first.command
+
+                is CarStatusEvent.Error ->
+                    first.command
+
+                else ->
+                    null
+            }
+
+        val secondCommand =
+            when (second) {
+                is CarStatusEvent.CommandResponse ->
+                    second.command
+
+                is CarStatusEvent.Error ->
+                    second.command
+
+                else ->
+                    null
+            }
+
+        return firstRequestId != null &&
+            firstRequestId ==
+            secondRequestId &&
+            firstCommand != null &&
+            firstCommand ==
+            secondCommand
     }
 
     /**

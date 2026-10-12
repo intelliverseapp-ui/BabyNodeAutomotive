@@ -49,6 +49,186 @@ class CarCommandDispatcherTest {
     }
 
 
+
+    @Test
+    fun earlyHandshakeResponseIsConsumedAfterSubmissionReturns() {
+        val transport =
+            FakeTransport()
+
+        val dispatcher =
+            createDispatcher(
+                transport
+            )
+
+        transport.beforeSendReturns = { request ->
+            if (
+                request.command.command ==
+                "protocol.handshake"
+            ) {
+                dispatcher.acceptTransportEvent(
+                    CarStatusEvent.CommandResponse(
+                        requestId =
+                            request.requestId,
+                        command =
+                            request.command,
+                        status =
+                            "ok"
+                    )
+                )
+
+                dispatcher.acceptTransportEvent(
+                    CarStatusEvent.Connected(
+                        transportName =
+                            "Bluetooth"
+                    )
+                )
+            }
+        }
+
+        val handshakeRequest =
+            submitHandshake(
+                dispatcher =
+                    dispatcher
+            )
+
+        var configurationResult:
+            CarCommandDispatchResult? =
+            null
+
+        dispatcher.sendModuleConfig(
+            moduleJsonId =
+                "single",
+            onResult = {
+                configurationResult =
+                    it
+            }
+        )
+
+        assertTrue(
+            configurationResult is
+                CarCommandDispatchResult.Submitted
+        )
+
+        assertEquals(
+            listOf(
+                "protocol.handshake",
+                "config.module"
+            ),
+            transport
+                .sentCommands
+                .map {
+                    it.command
+                }
+        )
+
+        assertEquals(
+            "protocol.handshake",
+            handshakeRequest.command.command
+        )
+    }
+
+    @Test
+    fun earlyConfigurationResponseMakesUserCommandsReady() {
+        val transport =
+            FakeTransport()
+
+        val dispatcher =
+            createDispatcher(
+                transport
+            )
+
+        val handshakeRequest =
+            submitHandshake(
+                dispatcher =
+                    dispatcher
+            )
+
+        dispatcher.acceptTransportEvent(
+            CarStatusEvent.CommandResponse(
+                requestId =
+                    handshakeRequest.requestId,
+                command =
+                    handshakeRequest.command,
+                status =
+                    "ok"
+            )
+        )
+
+        transport.beforeSendReturns = { request ->
+            if (
+                request.command.command ==
+                "config.module"
+            ) {
+                dispatcher.acceptTransportEvent(
+                    CarStatusEvent.CommandResponse(
+                        requestId =
+                            request.requestId,
+                        command =
+                            request.command,
+                        status =
+                            "ok"
+                    )
+                )
+
+                dispatcher.acceptTransportEvent(
+                    CarStatusEvent.Connected(
+                        transportName =
+                            "Bluetooth"
+                    )
+                )
+            }
+        }
+
+        var configurationResult:
+            CarCommandDispatchResult? =
+            null
+
+        dispatcher.sendModuleConfig(
+            moduleJsonId =
+                "single",
+            onResult = {
+                configurationResult =
+                    it
+            }
+        )
+
+        assertTrue(
+            configurationResult is
+                CarCommandDispatchResult.Submitted
+        )
+
+        var commandResult:
+            CarCommandDispatchResult? =
+            null
+
+        dispatcher.handle(
+            text =
+                "lock the doors",
+            onResult = {
+                commandResult =
+                    it
+            }
+        )
+
+        assertTrue(
+            commandResult is
+                CarCommandDispatchResult.Submitted
+        )
+
+        assertEquals(
+            listOf(
+                "protocol.handshake",
+                "config.module",
+                "LOCK_DOORS"
+            ),
+            transport
+                .sentCommands
+                .map {
+                    it.command
+                }
+        )
+    }
+
     @Test
     fun unsupportedDualModuleConfigurationFailsClosed() {
         val transport =
@@ -1043,6 +1223,10 @@ class CarCommandDispatcherTest {
         val sentCommands =
             mutableListOf<CanonicalCommand>()
 
+        var beforeSendReturns:
+            ((CarCommandRequest) -> Unit)? =
+            null
+
         private var nextRequestId =
             1L
 
@@ -1062,12 +1246,19 @@ class CarCommandDispatcherTest {
                 throw it
             }
 
-            return CarCommandRequest(
-                requestId =
-                    nextRequestId++,
-                command =
-                    command
+            val request =
+                CarCommandRequest(
+                    requestId =
+                        nextRequestId++,
+                    command =
+                        command
+                )
+
+            beforeSendReturns?.invoke(
+                request
             )
+
+            return request
         }
 
         override fun status():
