@@ -1014,6 +1014,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Exercises production external-intent inspection without
+     * manually invoking an Android lifecycle callback.
+     */
+    internal fun inspectExternalIntentForTest(
+        intent: Intent
+    ) {
+        inspectExternalIntent(
+            intent
+        )
+    }
+
     override fun onNewIntent(
         intent: Intent
     ) {
