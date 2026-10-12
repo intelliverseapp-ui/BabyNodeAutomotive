@@ -3,7 +3,6 @@ package com.babynode.automotive
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothSocket
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -31,7 +30,11 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-class CarCanBusBluetooth : CarCanTransport {
+class CarCanBusBluetooth(
+    private val connectionFactory:
+        RfcommConnectionFactory =
+        AndroidRfcommConnectionFactory
+) : CarCanTransport {
 
     companion object {
         private const val TAG =
@@ -101,11 +104,11 @@ class CarCanBusBluetooth : CarCanTransport {
 
     @Volatile
     private var bluetoothSocket:
-        BluetoothSocket? = null
+        RfcommConnection? = null
 
     @Volatile
     private var connectingSocket:
-        BluetoothSocket? = null
+        RfcommConnection? = null
 
     @Volatile
     private var inputStream:
@@ -126,6 +129,92 @@ class CarCanBusBluetooth : CarCanTransport {
     @Volatile
     private var permanentlyClosed =
         false
+
+    /**
+     * Installs a deterministic RFCOMM connection for transport
+     * conformance tests.
+     *
+     * This bypasses Android device discovery only. Send, receive,
+     * correlation, timeout, disconnect, and close behavior continue
+     * through the production transport state machine.
+     */
+    internal suspend fun installConnectionForTest(
+        connection: RfcommConnection,
+        transportName: String =
+            "Test RFCOMM"
+    ) {
+        connectMutex.withLock {
+            check(
+                !permanentlyClosed
+            ) {
+                "Bluetooth transport is permanently closed"
+            }
+
+            intentionalDisconnect =
+                false
+
+            val connectionGeneration =
+                socketGeneration.advance()
+
+            withContext(
+                Dispatchers.IO
+            ) {
+                connection.connect()
+            }
+
+            val installed =
+                connectionMutex.withLock {
+                    if (
+                        permanentlyClosed ||
+                        intentionalDisconnect ||
+                        !connection.isConnected ||
+                        !socketGeneration.isCurrent(
+                            connectionGeneration
+                        )
+                    ) {
+                        false
+                    } else {
+                        bluetoothSocket =
+                            connection
+
+                        inputStream =
+                            connection.inputStream
+
+                        outputStream =
+                            connection.outputStream
+
+                        activeSocketGeneration =
+                            connectionGeneration
+
+                        true
+                    }
+                }
+
+            if (!installed) {
+                runCatching {
+                    connection.close()
+                }
+
+                throw IOException(
+                    "Test RFCOMM connection could not be installed"
+                )
+            }
+
+            startReceiveLoop(
+                connectedSocket =
+                    connection,
+                connectedGeneration =
+                    connectionGeneration
+            )
+
+            statusFlow.emit(
+                CarStatusEvent.Connected(
+                    transportName =
+                        transportName
+                )
+            )
+        }
+    }
 
     @SuppressLint("MissingPermission")
     override suspend fun connect() {
@@ -177,7 +266,7 @@ class CarCanBusBluetooth : CarCanTransport {
             )
 
             var newSocket:
-                BluetoothSocket? = null
+                RfcommConnection? = null
 
             try {
                 val adapter =
@@ -213,8 +302,11 @@ class CarCanBusBluetooth : CarCanTransport {
                 adapter.cancelDiscovery()
 
                 newSocket =
-                    device.createRfcommSocketToServiceRecord(
-                        SPP_UUID
+                    connectionFactory.create(
+                        device =
+                            device,
+                        serviceUuid =
+                            SPP_UUID
                     )
 
                 connectingSocket =
@@ -952,7 +1044,7 @@ class CarCanBusBluetooth : CarCanTransport {
     }
 
     private fun startReceiveLoop(
-        connectedSocket: BluetoothSocket,
+        connectedSocket: RfcommConnection,
         connectedGeneration: Long
     ) {
         receiveJob?.cancel()
