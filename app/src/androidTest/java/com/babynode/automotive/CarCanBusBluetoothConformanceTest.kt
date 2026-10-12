@@ -132,8 +132,151 @@ class CarCanBusBluetoothConformanceTest {
             }
         }
 
-    private class FlushTriggeredResponseConnection :
-        RfcommConnection {
+
+    @Test
+    fun mismatchedResponseCommandFailsClosed() =
+        runBlocking {
+            val connection =
+                FlushTriggeredResponseConnection(
+                    responseCommand =
+                        "UNLOCK_DOORS"
+                )
+
+            val transport =
+                CarCanBusBluetooth()
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection
+                )
+
+                val eventsDeferred =
+                    async(
+                        start =
+                            CoroutineStart.UNDISPATCHED
+                    ) {
+                        withTimeout(
+                            5_000L
+                        ) {
+                            transport
+                                .status()
+                                .filter { event ->
+                                    event is
+                                        CarStatusEvent.CommandSent ||
+                                        (
+                                            event is
+                                                CarStatusEvent.Error &&
+                                                event.isRequestSpecific
+                                        ) ||
+                                        event is
+                                            CarStatusEvent.CommandResponse
+                                }
+                                .take(
+                                    2
+                                )
+                                .toList()
+                        }
+                    }
+
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "LOCK_DOORS"
+                        )
+                    )
+
+                val events =
+                    eventsDeferred.await()
+
+                val error =
+                    events.filterIsInstance<
+                        CarStatusEvent.Error
+                    >()
+                        .single()
+
+                assertEquals(
+                    request.sessionGeneration,
+                    error.sessionGeneration
+                )
+
+                assertEquals(
+                    request.requestId,
+                    error.requestId
+                )
+
+                assertEquals(
+                    request.command,
+                    error.command
+                )
+
+                assertTrue(
+                    error.message.contains(
+                        "response mismatch",
+                        ignoreCase =
+                            true
+                    )
+                )
+
+                assertTrue(
+                    error.message.contains(
+                        "expected LOCK_DOORS"
+                    )
+                )
+
+                assertTrue(
+                    error.message.contains(
+                        "received UNLOCK_DOORS"
+                    )
+                )
+
+                assertFalse(
+                    events.any {
+                        it is
+                            CarStatusEvent.CommandResponse
+                    }
+                )
+
+                assertTrue(
+                    events.any {
+                        it is
+                            CarStatusEvent.CommandSent
+                    }
+                )
+
+                assertEquals(
+                    error,
+                    CarRequestEventMatcher.selectBest(
+                        events =
+                            events,
+                        request =
+                            request
+                    )
+                )
+
+                assertFalse(
+                    transport
+                        .close()
+                        .any { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+                )
+            } finally {
+                transport.close()
+            }
+        }
+
+    private class FlushTriggeredResponseConnection(
+        private val responseCommand:
+            String =
+            "LOCK_DOORS"
+    ) : RfcommConnection {
 
         override var isConnected =
             false
@@ -234,7 +377,7 @@ class CarCanBusBluetoothConformanceTest {
                                 )
                                 .put(
                                     "command",
-                                    command
+                                    responseCommand
                                 )
                                 .put(
                                     "status",
