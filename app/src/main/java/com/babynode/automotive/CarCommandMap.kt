@@ -161,25 +161,49 @@ object CarCommandMap {
             return true
         }
 
-        val wrappedInSingleQuotes =
-            trimmedText.length >=
-                2 &&
-                (
-                    (
-                        trimmedText.first() ==
-                        '\'' &&
-                        trimmedText.last() ==
-                        '\''
-                    ) ||
-                    (
-                        trimmedText.first() ==
-                        '‘' &&
-                        trimmedText.last() ==
-                        '’'
-                    )
-                )
+        val hasDisallowedSingleQuoteSyntax =
+            trimmedText.withIndex()
+                .any { indexedCharacter ->
+                    val index =
+                        indexedCharacter.index
 
-        return wrappedInSingleQuotes
+                    val character =
+                        indexedCharacter.value
+
+                    when (character) {
+                        '‘' -> {
+                            true
+                        }
+
+                        '\'',
+                        '’' -> {
+                            val previousIsLetter =
+                                index >
+                                    0 &&
+                                    trimmedText[
+                                        index -
+                                            1
+                                    ].isLetter()
+
+                            val nextIsLetter =
+                                index <
+                                    trimmedText.lastIndex &&
+                                    trimmedText[
+                                        index +
+                                            1
+                                    ].isLetter()
+
+                            !previousIsLetter ||
+                                !nextIsLetter
+                        }
+
+                        else -> {
+                            false
+                        }
+                    }
+                }
+
+        return hasDisallowedSingleQuoteSyntax
     }
 
     private fun normalizeText(

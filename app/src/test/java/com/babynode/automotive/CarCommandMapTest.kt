@@ -66,6 +66,60 @@ class CarCommandMapTest {
         }
     }
 
+
+    @Test
+    fun unmatchedSingleQuotesCannotBecomeCommands() {
+        val approvedPhrases =
+            listOf(
+                "unlock the doors",
+                "lock the doors",
+                "open the trunk",
+                "driver window down",
+                "turn headlights on"
+            )
+
+        val unsafeInputs =
+            approvedPhrases.flatMap { phrase ->
+                listOf(
+                    "'$phrase",
+                    "$phrase'",
+                    "‘$phrase",
+                    "$phrase’"
+                )
+            }
+
+        unsafeInputs.forEach { input ->
+            assertEquals(
+                input,
+                CarCommandMap.UNKNOWN_COMMAND,
+                CarCommandMap.map(
+                    input
+                )
+            )
+        }
+    }
+
+    @Test
+    fun internalApostrophesRemainAvailableForNegationChecks() {
+        val inputs =
+            listOf(
+                "I can't unlock the doors",
+                "I can’t unlock the doors",
+                "don't open the trunk",
+                "don’t open the trunk"
+            )
+
+        inputs.forEach { input ->
+            assertEquals(
+                input,
+                CarCommandMap.IGNORED_NEGATED_COMMAND,
+                CarCommandMap.map(
+                    input
+                )
+            )
+        }
+    }
+
     @Test
     fun mentionStyleCommandsCannotBecomeCommands() {
         val inputs =
