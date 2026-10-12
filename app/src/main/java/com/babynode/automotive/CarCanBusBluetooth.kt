@@ -134,6 +134,14 @@ class CarCanBusBluetooth(
     private var receiveJob:
         Job? = null
 
+    /*
+     * Peer wire session_id negotiated by the validated handshake on the
+     * active RFCOMM connection. Distinct from the local sessionGeneration.
+     */
+    @Volatile
+    private var negotiatedPeerSessionId:
+        Long? = null
+
     @Volatile
     private var intentionalDisconnect =
         false
@@ -153,12 +161,23 @@ class CarCanBusBluetooth(
     internal suspend fun installConnectionForTest(
         connection: RfcommConnection,
         transportName: String =
-            "Test RFCOMM"
+            "Test RFCOMM",
+        peerSessionIdForTest: Long? =
+            null
     ) {
         check(
             BuildConfig.DEBUG
         ) {
             "RFCOMM test installation is unavailable in release builds"
+        }
+
+        require(
+            peerSessionIdForTest == null ||
+                BabyNodeProtocol.parseSessionId(
+                    peerSessionIdForTest
+                ) != null
+        ) {
+            "Test peer session ID is invalid"
         }
 
         connectMutex.withLock {
@@ -170,6 +189,9 @@ class CarCanBusBluetooth(
 
             intentionalDisconnect =
                 false
+
+            negotiatedPeerSessionId =
+                null
 
             val connectionGeneration =
                 socketGeneration.advance()
@@ -192,6 +214,9 @@ class CarCanBusBluetooth(
                     ) {
                         false
                     } else {
+                        negotiatedPeerSessionId =
+                            peerSessionIdForTest
+
                         bluetoothSocket =
                             connection
 
@@ -363,6 +388,9 @@ class CarCanBusBluetooth(
                         ) {
                             false
                         } else {
+                            negotiatedPeerSessionId =
+                                null
+
                             bluetoothSocket =
                                 newSocket
 
@@ -587,6 +615,9 @@ class CarCanBusBluetooth(
         activeSocketGeneration =
             0L
 
+        negotiatedPeerSessionId =
+            null
+
         Log.i(
             TAG,
             "Disconnecting Bluetooth transport"
@@ -647,36 +678,6 @@ class CarCanBusBluetooth(
             )
         }
 
-        val packet =
-            JSONObject().apply {
-                put(
-                    "id",
-                    messageId
-                )
-
-                put(
-                    "version",
-                    BabyNodeProtocol.VERSION
-                )
-
-                put(
-                    "type",
-                    "command"
-                )
-
-                put(
-                    "command",
-                    command.command
-                )
-
-                if (command.value != null) {
-                    put(
-                        "value",
-                        command.value
-                    )
-                }
-            }.toString()
-
         val pendingCommand =
             PendingCommand(
                 request =
@@ -726,6 +727,64 @@ class CarCanBusBluetooth(
                         "BabyNodeCAN is not connected"
                     )
                 }
+
+                val isHandshake =
+                    command.command ==
+                        PROTOCOL_HANDSHAKE_COMMAND
+
+                if (isHandshake) {
+                    negotiatedPeerSessionId =
+                        null
+                }
+
+                val peerSessionId =
+                    negotiatedPeerSessionId
+
+                if (
+                    !isHandshake &&
+                    peerSessionId == null
+                ) {
+                    throw IOException(
+                        "BabyNodeCAN peer session is not negotiated"
+                    )
+                }
+
+                val packet =
+                    JSONObject().apply {
+                        put(
+                            "id",
+                            messageId
+                        )
+
+                        put(
+                            "version",
+                            BabyNodeProtocol.VERSION
+                        )
+
+                        put(
+                            "type",
+                            "command"
+                        )
+
+                        put(
+                            "command",
+                            command.command
+                        )
+
+                        if (peerSessionId != null) {
+                            put(
+                                "session_id",
+                                peerSessionId
+                            )
+                        }
+
+                        if (command.value != null) {
+                            put(
+                                "value",
+                                command.value
+                            )
+                        }
+                    }.toString()
 
                 pendingCommands[
                     messageId
@@ -953,6 +1012,9 @@ class CarCanBusBluetooth(
 
         activeSocketGeneration =
             0L
+
+        negotiatedPeerSessionId =
+            null
 
         Log.i(
             TAG,
@@ -1350,6 +1412,39 @@ class CarCanBusBluetooth(
             val expectedCommand =
                 request.command.command
 
+            val isHandshakeBootstrapResponse =
+                expectedCommand ==
+                    PROTOCOL_HANDSHAKE_COMMAND &&
+                    responseCommand ==
+                    PROTOCOL_HANDSHAKE_COMMAND
+
+            if (!isHandshakeBootstrapResponse) {
+                val responseSessionId =
+                    BabyNodeProtocol.parseSessionId(
+                        json.opt(
+                            "session_id"
+                        )
+                    )
+
+                val currentSessionId =
+                    negotiatedPeerSessionId
+
+                if (
+                    responseSessionId == null ||
+                    currentSessionId == null ||
+                    responseSessionId !=
+                    currentSessionId
+                ) {
+                    Log.w(
+                        TAG,
+                        "Ignoring response with missing, invalid, " +
+                            "or mismatched session_id: id=$commandId"
+                    )
+
+                    return
+                }
+            }
+
             if (
                 !BabyNodeProtocol.validateResponseCommand(
                     command =
@@ -1447,6 +1542,21 @@ class CarCanBusBluetooth(
                 )
 
                 return
+            }
+
+            if (
+                isHandshakeBootstrapResponse &&
+                responseStatus == "ok" &&
+                !permanentlyClosed &&
+                !intentionalDisconnect &&
+                bluetoothSocket != null
+            ) {
+                negotiatedPeerSessionId =
+                    BabyNodeProtocol.parseSessionId(
+                        json.opt(
+                            "session_id"
+                        )
+                    )
             }
 
             pendingCommand
@@ -1676,6 +1786,9 @@ class CarCanBusBluetooth(
     }
 
     private fun closeSocketResourcesImmediately() {
+        negotiatedPeerSessionId =
+            null
+
         runCatching {
             inputStream?.close()
         }

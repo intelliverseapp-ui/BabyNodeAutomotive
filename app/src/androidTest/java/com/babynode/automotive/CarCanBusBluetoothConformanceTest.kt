@@ -32,6 +32,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
+private const val TEST_PEER_SESSION_ID =
+    4_242L
+
 @RunWith(AndroidJUnit4::class)
 class CarCanBusBluetoothConformanceTest {
 
@@ -47,7 +50,9 @@ class CarCanBusBluetoothConformanceTest {
             try {
                 transport.installConnectionForTest(
                     connection =
-                        connection
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
                 )
 
                 val eventsDeferred =
@@ -159,7 +164,9 @@ class CarCanBusBluetoothConformanceTest {
             try {
                 transport.installConnectionForTest(
                     connection =
-                        connection
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
                 )
 
                 val eventsDeferred =
@@ -317,7 +324,9 @@ class CarCanBusBluetoothConformanceTest {
             try {
                 transport.installConnectionForTest(
                     connection =
-                        connection
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
                 )
 
                 val request =
@@ -432,7 +441,9 @@ class CarCanBusBluetoothConformanceTest {
             try {
                 transport.installConnectionForTest(
                     connection =
-                        connection
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
                 )
 
                 val sentEventDeferred =
@@ -561,7 +572,9 @@ class CarCanBusBluetoothConformanceTest {
             try {
                 transport.installConnectionForTest(
                     connection =
-                        connection
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
                 )
 
                 val request =
@@ -686,7 +699,9 @@ class CarCanBusBluetoothConformanceTest {
             try {
                 transport.installConnectionForTest(
                     connection =
-                        connection
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
                 )
 
                 val eventsDeferred =
@@ -941,6 +956,10 @@ class CarCanBusBluetoothConformanceTest {
                                             "status",
                                             "ok"
                                         )
+                                        .put(
+                                            "session_id",
+                                            TEST_PEER_SESSION_ID
+                                        )
                                         .toString() +
                                         "\n"
 
@@ -1013,7 +1032,9 @@ class CarCanBusBluetoothConformanceTest {
             try {
                 transport.installConnectionForTest(
                     connection =
-                        connection
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
                 )
 
                 val request =
@@ -1182,7 +1203,9 @@ class CarCanBusBluetoothConformanceTest {
             try {
                 transport.installConnectionForTest(
                     connection =
-                        connection
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
                 )
 
                 val exception =
@@ -1450,7 +1473,9 @@ class CarCanBusBluetoothConformanceTest {
             try {
                 transport.installConnectionForTest(
                     connection =
-                        connection
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
                 )
 
                 val request =
@@ -1627,7 +1652,9 @@ class CarCanBusBluetoothConformanceTest {
             try {
                 transport.installConnectionForTest(
                     connection =
-                        connection
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
                 )
 
                 val command =
@@ -1881,7 +1908,9 @@ class CarCanBusBluetoothConformanceTest {
                     connection =
                         oldConnection,
                     transportName =
-                        "Old RFCOMM"
+                        "Old RFCOMM",
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
                 )
 
                 assertTrue(
@@ -1892,7 +1921,9 @@ class CarCanBusBluetoothConformanceTest {
                     connection =
                         newConnection,
                     transportName =
-                        "New RFCOMM"
+                        "New RFCOMM",
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
                 )
 
                 assertTrue(
@@ -2195,6 +2226,10 @@ class CarCanBusBluetoothConformanceTest {
                                 .put(
                                     "status",
                                     responseStatus
+                                )
+                                .put(
+                                    "session_id",
+                                    TEST_PEER_SESSION_ID
                                 )
                                 .toString() +
                                 "\n"

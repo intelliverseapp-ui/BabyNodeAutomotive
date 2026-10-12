@@ -39,6 +39,38 @@ object BabyNodeProtocol {
     const val MAX_SESSION_ID =
         4_294_967_295L
 
+    /**
+     * Returns the exact wire session ID when it is an integral JSON
+     * number in 1..MAX_SESSION_ID, otherwise null.
+     */
+    fun parseSessionId(
+        sessionId: Any?
+    ): Long? {
+        val value =
+            when (sessionId) {
+                is Byte ->
+                    sessionId.toLong()
+
+                is Short ->
+                    sessionId.toLong()
+
+                is Int ->
+                    sessionId.toLong()
+
+                is Long ->
+                    sessionId
+
+                else ->
+                    return null
+            }
+
+        return if (value in 1L..MAX_SESSION_ID) {
+            value
+        } else {
+            null
+        }
+    }
+
     fun validateHandshakeCapabilities(
         sessionId: Any?,
         module: Any?,
