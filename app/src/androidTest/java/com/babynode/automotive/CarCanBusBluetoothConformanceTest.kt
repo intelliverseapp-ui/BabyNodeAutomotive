@@ -8,8 +8,11 @@ import java.io.PipedInputStream
 import java.io.PipedOutputStream
 import java.nio.charset.StandardCharsets
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
@@ -1588,6 +1591,258 @@ class CarCanBusBluetoothConformanceTest {
                 transport.close()
             }
         }
+
+
+    @Test
+    fun cancellationAfterWriteStartsReportsOutcomeUnknownExactlyOnce() =
+        runBlocking {
+            val connection =
+                BlockingFlushConnection()
+
+            val transport =
+                CarCanBusBluetooth(
+                    responseTimeoutMillis =
+                        5_000L
+                )
+
+            val observedEvents =
+                Collections.synchronizedList(
+                    mutableListOf<CarStatusEvent>()
+                )
+
+            val collector =
+                launch(
+                    start =
+                        CoroutineStart.UNDISPATCHED
+                ) {
+                    transport
+                        .status()
+                        .collect { event ->
+                            observedEvents +=
+                                event
+                        }
+                }
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection
+                )
+
+                val command =
+                    CanonicalCommand(
+                        command =
+                            "LOCK_DOORS"
+                    )
+
+                val sendJob =
+                    launch(
+                        context =
+                            Dispatchers.Default
+                    ) {
+                        runCatching {
+                            transport.sendCommand(
+                                command
+                            )
+                        }
+                    }
+
+                assertTrue(
+                    connection.awaitFlushStarted()
+                )
+
+                sendJob.cancel()
+
+                connection.releaseFlush()
+
+                sendJob.join()
+
+                val request =
+                    CarCommandRequest(
+                        sessionGeneration =
+                            transport.sessionGeneration,
+                        requestId =
+                            1L,
+                        command =
+                            command
+                    )
+
+                delay(
+                    250L
+                )
+
+                assertFalse(
+                    observedEvents.any { event ->
+                        CarRequestEventMatcher.matches(
+                            event =
+                                event,
+                            request =
+                                request
+                        )
+                    }
+                )
+
+                val terminalEvents =
+                    transport.close()
+
+                val matchingTerminalEvents =
+                    terminalEvents.filter { event ->
+                        CarRequestEventMatcher.matches(
+                            event =
+                                event,
+                            request =
+                                request
+                        )
+                    }
+
+                assertEquals(
+                    1,
+                    matchingTerminalEvents.size
+                )
+
+                val terminalError =
+                    matchingTerminalEvents
+                        .single() as
+                        CarStatusEvent.Error
+
+                assertTrue(
+                    terminalError.message.contains(
+                        "outcome unknown",
+                        ignoreCase =
+                            true
+                    )
+                )
+
+                assertEquals(
+                    request.sessionGeneration,
+                    terminalError.sessionGeneration
+                )
+
+                assertEquals(
+                    request.requestId,
+                    terminalError.requestId
+                )
+
+                assertEquals(
+                    request.command,
+                    terminalError.command
+                )
+
+                assertTrue(
+                    transport.close()
+                        .isEmpty()
+                )
+            } finally {
+                connection.releaseFlush()
+                collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
+
+    private class BlockingFlushConnection :
+        RfcommConnection {
+
+        override var isConnected =
+            false
+            private set
+
+        private val peerWriter =
+            PipedOutputStream()
+
+        override val inputStream =
+            PipedInputStream(
+                peerWriter
+            )
+
+        private val writtenBytes =
+            ByteArrayOutputStream()
+
+        private val flushStarted =
+            CountDownLatch(
+                1
+            )
+
+        private val flushRelease =
+            CountDownLatch(
+                1
+            )
+
+        override val outputStream:
+            OutputStream =
+            object : OutputStream() {
+
+                override fun write(
+                    value: Int
+                ) {
+                    writtenBytes.write(
+                        value
+                    )
+                }
+
+                override fun write(
+                    bytes: ByteArray,
+                    offset: Int,
+                    length: Int
+                ) {
+                    writtenBytes.write(
+                        bytes,
+                        offset,
+                        length
+                    )
+                }
+
+                override fun flush() {
+                    assertTrue(
+                        writtenBytes.size() >
+                            0
+                    )
+
+                    flushStarted.countDown()
+
+                    flushRelease.await(
+                        5L,
+                        TimeUnit.SECONDS
+                    )
+                }
+            }
+
+        fun awaitFlushStarted():
+            Boolean {
+            return flushStarted.await(
+                5L,
+                TimeUnit.SECONDS
+            )
+        }
+
+        fun releaseFlush() {
+            flushRelease.countDown()
+        }
+
+        override fun connect() {
+            isConnected =
+                true
+        }
+
+        override fun close() {
+            isConnected =
+                false
+
+            releaseFlush()
+
+            runCatching {
+                peerWriter.close()
+            }
+
+            runCatching {
+                inputStream.close()
+            }
+
+            runCatching {
+                writtenBytes.close()
+            }
+        }
+    }
 
     private class FlushTriggeredResponseConnection(
         private val responseCommand:

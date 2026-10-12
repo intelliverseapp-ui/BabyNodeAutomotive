@@ -798,17 +798,6 @@ class CarCanBusBluetooth(
                     "Command send cancelled after write started: " +
                         "outcome unknown"
 
-                transportScope.launch {
-                    emitRequestError(
-                        request =
-                            request,
-                        message =
-                            message,
-                        throwable =
-                            e
-                    )
-                }
-
                 Log.w(
                     TAG,
                     "Command cancellation outcome unknown: " +
