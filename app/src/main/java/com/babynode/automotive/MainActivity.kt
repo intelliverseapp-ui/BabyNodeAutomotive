@@ -45,6 +45,17 @@ class MainActivity : ComponentActivity() {
         private const val TAG =
             "BNA_MainActivity"
 
+        internal var transportFactory:
+            () -> CarCanTransport = {
+                CarCanBusBluetooth()
+            }
+
+        internal fun resetTransportFactoryForTest() {
+            transportFactory = {
+                CarCanBusBluetooth()
+            }
+        }
+
         private const val TRANSPORT_NAME =
             "Bluetooth"
 
@@ -198,7 +209,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         val initialTransport =
-            CarCanBusBluetooth()
+            transportFactory()
 
         transport =
             initialTransport
@@ -438,6 +449,20 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    /**
+     * Exercises the production transport-replacement path from
+     * instrumented lifecycle tests.
+     */
+    internal fun replaceTransportForTest() {
+        replaceTransport(
+            module =
+                selectedModule,
+            onDispatcherReplaced = {
+                // The lifecycle test does not retain Compose UI state.
+            }
+        )
+    }
+
     private fun replaceTransport(
         module: ModuleType,
         onDispatcherReplaced:
@@ -487,7 +512,7 @@ class MainActivity : ComponentActivity() {
         )
 
         val newTransport =
-            CarCanBusBluetooth()
+            transportFactory()
 
         transport =
             newTransport
