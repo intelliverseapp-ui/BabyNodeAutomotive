@@ -318,23 +318,51 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onForgetDevice = {
-                            BabyNodeApp
-                                .instance
-                                .clearApprovedBabyNodeCanAddress()
+                            val identityRemoved =
+                                BabyNodeApp
+                                    .instance
+                                    .clearApprovedBabyNodeCanAddress()
 
-                            deviceApprovalPending =
-                                false
+                            val decision =
+                                ForgetDeviceDecision
+                                    .fromPersistenceResult(
+                                        identityRemoved =
+                                            identityRemoved
+                                    )
 
-                            replaceTransport(
-                                module =
-                                    currentModule,
-                                onDispatcherReplaced = {
-                                    replacementDispatcher ->
+                            when {
+                                decision.replaceTransport -> {
+                                    deviceApprovalPending =
+                                        false
 
-                                    currentDispatcher =
-                                        replacementDispatcher
+                                    replaceTransport(
+                                        module =
+                                            currentModule,
+                                        onDispatcherReplaced = {
+                                            replacementDispatcher ->
+
+                                            currentDispatcher =
+                                                replacementDispatcher
+                                        }
+                                    )
                                 }
-                            )
+
+                                decision.showPersistenceError -> {
+                                    statusBus.accept(
+                                        CarStatusEvent.Error(
+                                            message =
+                                                "BabyNodeCAN identity " +
+                                                    "could not be forgotten"
+                                        )
+                                    )
+
+                                    Log.e(
+                                        TAG,
+                                        "Approved BabyNodeCAN identity " +
+                                            "removal failed"
+                                    )
+                                }
+                            }
                         },
                         onRetryConnection = {
                             connectionGeneration.advance()
