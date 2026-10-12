@@ -1,8 +1,6 @@
 package com.babynode.automotive
 
 import android.annotation.SuppressLint
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothDevice
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -31,6 +29,9 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 class CarCanBusBluetooth(
+    private val deviceProvider:
+        BluetoothDeviceProvider =
+        AndroidBluetoothDeviceProvider,
     private val connectionFactory:
         RfcommConnectionFactory =
         AndroidRfcommConnectionFactory,
@@ -312,10 +313,7 @@ class CarCanBusBluetooth(
                 RfcommConnection? = null
 
             try {
-                val adapter =
-                    BluetoothAdapter.getDefaultAdapter()
-
-                if (adapter == null) {
+                if (!deviceProvider.isSupported) {
                     statusFlow.emit(
                         CarStatusEvent.Error(
                             message =
@@ -326,7 +324,7 @@ class CarCanBusBluetooth(
                     return
                 }
 
-                if (!adapter.isEnabled) {
+                if (!deviceProvider.isEnabled) {
                     statusFlow.emit(
                         CarStatusEvent.Error(
                             message =
@@ -339,10 +337,10 @@ class CarCanBusBluetooth(
 
                 val device =
                     findApprovedBabyNodeCanDevice(
-                        adapter
+                        deviceProvider
                     ) ?: return
 
-                adapter.cancelDiscovery()
+                deviceProvider.cancelDiscovery()
 
                 newSocket =
                     connectionFactory.create(
@@ -501,12 +499,11 @@ class CarCanBusBluetooth(
         }
     }
 
-    @SuppressLint("MissingPermission")
     private suspend fun findApprovedBabyNodeCanDevice(
-        adapter: BluetoothAdapter
-    ): BluetoothDevice? {
+        deviceProvider: BluetoothDeviceProvider
+    ): BluetoothDeviceIdentity? {
         val bondedDevices =
-            adapter.bondedDevices
+            deviceProvider.bondedDevices
 
         val approvedAddress =
             BabyNodeApp

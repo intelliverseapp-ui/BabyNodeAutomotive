@@ -1,7 +1,6 @@
 package com.babynode.automotive
 
 import android.annotation.SuppressLint
-import android.bluetooth.BluetoothDevice
 import java.util.UUID
 
 /**
@@ -12,11 +11,17 @@ object AndroidRfcommConnectionFactory :
 
     @SuppressLint("MissingPermission")
     override fun create(
-        device: BluetoothDevice,
+        device: BluetoothDeviceIdentity,
         serviceUuid: UUID
     ): RfcommConnection {
+        val bluetoothDevice =
+            device.bluetoothDevice
+                ?: throw IllegalArgumentException(
+                    "AndroidRfcommConnectionFactory requires an Android BluetoothDevice"
+                )
+
         return AndroidRfcommConnection(
-            device.createRfcommSocketToServiceRecord(
+            bluetoothDevice.createRfcommSocketToServiceRecord(
                 serviceUuid
             )
         )

@@ -1,6 +1,5 @@
 package com.babynode.automotive
 
-import android.bluetooth.BluetoothDevice
 import java.util.UUID
 
 /**
@@ -9,7 +8,7 @@ import java.util.UUID
 fun interface RfcommConnectionFactory {
 
     fun create(
-        device: BluetoothDevice,
+        device: BluetoothDeviceIdentity,
         serviceUuid: UUID
     ): RfcommConnection
 }
