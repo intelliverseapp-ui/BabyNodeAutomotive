@@ -25,6 +25,8 @@ fun AutomotiveScreen(
     connectionState: CarConnectionState,
     status: CarStatusEvent?,
     eventHistory: List<CarStatusEvent>,
+    restoredTerminalOutcome: CarStatusEvent? = null,
+    onRestoredOutcomeDismissed: () -> Unit = {},
     modifier: Modifier = Modifier,
     onModuleSelected: (ModuleType) -> Unit = {},
     onApproveDevice: (String) -> Unit = {},
@@ -260,7 +262,11 @@ fun AutomotiveScreen(
                 status =
                     status,
                 eventHistory =
-                    eventHistory
+                    eventHistory,
+                restoredTerminalOutcome =
+                    restoredTerminalOutcome,
+                onRestoredOutcomeDismissed =
+                    onRestoredOutcomeDismissed
             )
         }
 

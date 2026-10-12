@@ -62,6 +62,19 @@ class MainActivity : ComponentActivity() {
         private const val STATE_SELECTED_MODULE =
             "selected_module"
 
+        private const val STATE_RESTORED_OUTCOME =
+            "restored_terminal_outcome"
+
+        private const val OUTCOME_TYPE = "type"
+        private const val OUTCOME_TYPE_RESPONSE = "response"
+        private const val OUTCOME_TYPE_ERROR = "error"
+        private const val OUTCOME_GENERATION = "session_generation"
+        private const val OUTCOME_REQUEST_ID = "request_id"
+        private const val OUTCOME_COMMAND = "command"
+        private const val OUTCOME_VALUE = "value"
+        private const val OUTCOME_STATUS = "status"
+        private const val OUTCOME_MESSAGE = "message"
+
         private const val DEFAULT_MAXIMUM_RECONNECT_ATTEMPTS =
             5
 
@@ -119,6 +132,9 @@ class MainActivity : ComponentActivity() {
     private var reconnectJob:
         Job? = null
 
+    private var restoredTerminalOutcome by
+        mutableStateOf<CarStatusEvent?>(null)
+
     private var selectedModule:
         ModuleType =
         ModuleType.SINGLE_CAN
@@ -128,6 +144,44 @@ class MainActivity : ComponentActivity() {
 
     private var activityIsDestroying =
         false
+
+    private val receivedTerminalOutcomes =
+        LinkedHashMap<Pair<Long, Long>, CarStatusEvent>()
+
+    private fun retainTerminalOutcome(
+        event: CarStatusEvent
+    ) {
+        val key =
+            when (event) {
+                is CarStatusEvent.CommandResponse ->
+                    event.sessionGeneration to
+                        event.requestId
+
+                is CarStatusEvent.Error -> {
+                    val generation =
+                        event.sessionGeneration
+                    val requestId =
+                        event.requestId
+
+                    if (
+                        !event.isRequestSpecific ||
+                        generation == null ||
+                        requestId == null
+                    ) {
+                        return
+                    }
+
+                    generation to requestId
+                }
+
+                else -> return
+            }
+
+        receivedTerminalOutcomes.putIfAbsent(
+            key,
+            event
+        )
+    }
 
     private var intentionalTransportReplacement =
         false
@@ -229,6 +283,22 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        val consumedRestoredOutcome: CarStatusEvent? =
+            restoredTerminalOutcomes.lastOrNull { event ->
+                when (event) {
+                    is CarStatusEvent.CommandResponse -> true
+                    is CarStatusEvent.Error ->
+                        event.isRequestSpecific
+                    else -> false
+                }
+            }
+
+        restoredTerminalOutcome =
+            restoreSavedTerminalOutcome(
+                savedInstanceState
+            )
+                ?: consumedRestoredOutcome
+
         enableEdgeToEdge()
 
         val initialTransport =
@@ -296,6 +366,12 @@ class MainActivity : ComponentActivity() {
                             latestEvent,
                         eventHistory =
                             eventHistory,
+                        restoredTerminalOutcome =
+                            restoredTerminalOutcome,
+                        onRestoredOutcomeDismissed = {
+                            restoredTerminalOutcome =
+                                null
+                        },
                         modifier =
                             Modifier.padding(
                                 innerPadding
@@ -436,9 +512,124 @@ class MainActivity : ComponentActivity() {
             selectedModule.name
         )
 
+        saveTerminalOutcome(
+            restoredTerminalOutcome
+        )?.let { saved ->
+            outState.putBundle(
+                STATE_RESTORED_OUTCOME,
+                saved
+            )
+        }
+
         super.onSaveInstanceState(
             outState
         )
+    }
+
+    private fun saveTerminalOutcome(
+        event: CarStatusEvent?
+    ): Bundle? {
+        return when (event) {
+            is CarStatusEvent.CommandResponse -> Bundle().apply {
+                putString(OUTCOME_TYPE, OUTCOME_TYPE_RESPONSE)
+                putLong(OUTCOME_GENERATION, event.sessionGeneration)
+                putLong(OUTCOME_REQUEST_ID, event.requestId)
+                putString(OUTCOME_COMMAND, event.command.command)
+                event.command.value?.let {
+                    putString(OUTCOME_VALUE, it)
+                }
+                putString(OUTCOME_STATUS, event.status)
+            }
+
+            is CarStatusEvent.Error -> {
+                val requestId = event.requestId
+                val command = event.command
+
+                if (requestId == null || command == null) {
+                    null
+                } else {
+                    Bundle().apply {
+                        putString(OUTCOME_TYPE, OUTCOME_TYPE_ERROR)
+                        event.sessionGeneration?.let {
+                            putLong(OUTCOME_GENERATION, it)
+                        }
+                        putLong(OUTCOME_REQUEST_ID, requestId)
+                        putString(OUTCOME_COMMAND, command.command)
+                        command.value?.let {
+                            putString(OUTCOME_VALUE, it)
+                        }
+                        putString(OUTCOME_MESSAGE, event.message)
+                    }
+                }
+            }
+
+            else -> null
+        }
+    }
+
+    // Any missing or malformed field yields null (fail closed).
+    private fun restoreSavedTerminalOutcome(
+        savedInstanceState: Bundle?
+    ): CarStatusEvent? {
+        return runCatching {
+            val saved =
+                savedInstanceState
+                    ?.getBundle(STATE_RESTORED_OUTCOME)
+                    ?: return@runCatching null
+
+            if (!saved.containsKey(OUTCOME_REQUEST_ID)) {
+                return@runCatching null
+            }
+
+            val requestId = saved.getLong(OUTCOME_REQUEST_ID)
+            val commandName =
+                saved.getString(OUTCOME_COMMAND)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: return@runCatching null
+            val command =
+                CanonicalCommand(
+                    commandName,
+                    saved.getString(OUTCOME_VALUE)
+                )
+
+            when (saved.getString(OUTCOME_TYPE)) {
+                OUTCOME_TYPE_RESPONSE -> {
+                    if (!saved.containsKey(OUTCOME_GENERATION)) {
+                        return@runCatching null
+                    }
+
+                    CarStatusEvent.CommandResponse(
+                        sessionGeneration =
+                            saved.getLong(OUTCOME_GENERATION),
+                        requestId = requestId,
+                        command = command,
+                        status =
+                            saved.getString(OUTCOME_STATUS)
+                                ?.takeIf { it.isNotBlank() }
+                                ?: return@runCatching null
+                    )
+                }
+
+                OUTCOME_TYPE_ERROR -> {
+                    CarStatusEvent.Error(
+                        message =
+                            saved.getString(OUTCOME_MESSAGE)
+                                ?.takeIf { it.isNotBlank() }
+                                ?: return@runCatching null,
+                        sessionGeneration =
+                            if (saved.containsKey(OUTCOME_GENERATION)) {
+                                saved.getLong(OUTCOME_GENERATION)
+                            } else {
+                                null
+                            },
+                        requestId = requestId,
+                        command = command
+                    )
+                }
+
+                else -> null
+            }
+        }.getOrNull()
     }
 
     private fun restoreSelectedModule(
@@ -1061,8 +1252,14 @@ class MainActivity : ComponentActivity() {
         transportEventsJob =
             null
 
+        transport.close().forEach { event ->
+            retainTerminalOutcome(
+                event
+            )
+        }
+
         val terminalEvents =
-            transport.close()
+            receivedTerminalOutcomes.values.toList()
 
         if (terminalEvents.isNotEmpty()) {
             val persisted =
@@ -1108,6 +1305,10 @@ class MainActivity : ComponentActivity() {
                         )
 
                         statusBus.accept(
+                            event
+                        )
+
+                        retainTerminalOutcome(
                             event
                         )
 

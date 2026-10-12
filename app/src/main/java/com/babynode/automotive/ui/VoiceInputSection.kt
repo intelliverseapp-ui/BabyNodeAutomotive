@@ -51,6 +51,8 @@ fun VoiceInputSection(
     dispatcher: CarCommandDispatcher,
     status: CarStatusEvent?,
     eventHistory: List<CarStatusEvent>,
+    restoredTerminalOutcome: CarStatusEvent? = null,
+    onRestoredOutcomeDismissed: () -> Unit = {},
     recognitionLauncherForTest:
         (((String?) -> Unit) -> Unit)? =
         null
@@ -250,6 +252,8 @@ fun VoiceInputSection(
                     "Starting voice recognition"
                 )
 
+                onRestoredOutcomeDismissed()
+
                 recognizedText =
                     ""
 
@@ -300,6 +304,45 @@ fun VoiceInputSection(
             Text(
                 text = "Speak Command"
             )
+        }
+
+        val restoredOutcomeText =
+            restoredOutcomeMessage(
+                restoredTerminalOutcome
+            )
+
+        if (restoredOutcomeText != null) {
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        12.dp
+                    )
+            )
+
+            Text(
+                text =
+                    restoredOutcomeText,
+                style =
+                    MaterialTheme.typography.bodyMedium
+            )
+
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        8.dp
+                    )
+            )
+
+            // Only clears visible state; never touches the dispatcher.
+            Button(
+                onClick =
+                    onRestoredOutcomeDismissed
+            ) {
+                Text(
+                    text =
+                        "Dismiss restored outcome"
+                )
+            }
         }
 
         if (
@@ -917,5 +960,48 @@ private fun voiceTransportStatusText(
             "Transport: Waiting for command status " +
                 "(id=${request.requestId})"
         }
+    }
+}
+private fun restoredOutcomeMessage(
+    outcome: CarStatusEvent?
+): String? {
+    return when (outcome) {
+        is CarStatusEvent.CommandResponse -> {
+            val statusText =
+                if (
+                    outcome.status.equals(
+                        "ok",
+                        ignoreCase = true
+                    )
+                ) {
+                    "BabyNodeCAN accepted the request (status: ok)"
+                } else {
+                    "BabyNodeCAN response status: ${outcome.status}"
+                }
+
+            "Restored previous outcome: " +
+                statusText +
+                ". Command: ${outcome.command.command}, " +
+                "request ID: ${outcome.requestId}. " +
+                "This does not confirm that a vehicle operation completed."
+        }
+
+        is CarStatusEvent.Error -> {
+            val command =
+                outcome.command
+            val requestId =
+                outcome.requestId
+
+            if (command == null || requestId == null) {
+                null
+            } else {
+                "Restored previous outcome: " +
+                    outcome.message +
+                    " Command: ${command.command}, " +
+                    "request ID: $requestId."
+            }
+        }
+
+        else -> null
     }
 }

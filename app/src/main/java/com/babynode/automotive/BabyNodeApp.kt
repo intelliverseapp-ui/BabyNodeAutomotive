@@ -177,48 +177,78 @@ class BabyNodeApp : Application() {
     fun saveTerminalRequestOutcomes(
         events: List<CarStatusEvent>
     ): Boolean {
-        val terminalEvents =
-            events.filterIsInstance<
-                CarStatusEvent.Error
-            >()
-                .filter {
-                    it.isRequestSpecific
-                }
-
         val encodedEvents =
             JSONArray()
 
-        terminalEvents.forEach { event ->
-            val sessionGeneration =
-                event.sessionGeneration
-                    ?: return@forEach
-
-            val requestId =
-                event.requestId
-                    ?: return@forEach
-
-            val command =
-                event.command
-                    ?: return@forEach
+        events.forEach { event ->
+            val sessionGeneration: Long
+            val requestId: Long
+            val command: CanonicalCommand
+            val eventType: String
 
             val encodedEvent =
                 JSONObject()
-                    .put(
+
+            when (event) {
+                is CarStatusEvent.Error -> {
+                    if (!event.isRequestSpecific) {
+                        return@forEach
+                    }
+
+                    sessionGeneration =
+                        event.sessionGeneration
+                            ?: return@forEach
+                    requestId =
+                        event.requestId
+                            ?: return@forEach
+                    command =
+                        event.command
+                            ?: return@forEach
+                    eventType =
+                        EVENT_TYPE_ERROR
+
+                    encodedEvent.put(
                         "message",
                         event.message
                     )
-                    .put(
-                        "session_generation",
-                        sessionGeneration
+                }
+
+                is CarStatusEvent.CommandResponse -> {
+                    sessionGeneration =
+                        event.sessionGeneration
+                    requestId =
+                        event.requestId
+                    command =
+                        event.command
+                    eventType =
+                        EVENT_TYPE_COMMAND_RESPONSE
+
+                    encodedEvent.put(
+                        "status",
+                        event.status
                     )
-                    .put(
-                        "request_id",
-                        requestId
-                    )
-                    .put(
-                        "command",
-                        command.command
-                    )
+                }
+
+                else -> return@forEach
+            }
+
+            encodedEvent
+                .put(
+                    "event_type",
+                    eventType
+                )
+                .put(
+                    "session_generation",
+                    sessionGeneration
+                )
+                .put(
+                    "request_id",
+                    requestId
+                )
+                .put(
+                    "command",
+                    command.command
+                )
 
             command.value?.let { value ->
                 encodedEvent.put(
@@ -295,9 +325,9 @@ class BabyNodeApp : Application() {
                             "command"
                         )
 
-                    val message =
+                    val eventType =
                         encodedEvent.getString(
-                            "message"
+                            "event_type"
                         )
 
                     val commandValue =
@@ -317,26 +347,61 @@ class BabyNodeApp : Application() {
                         BabyNodeProtocol.validateRequestId(
                             requestId
                         ) &&
-                        commandName.isNotBlank() &&
-                        message.isNotBlank()
+                        commandName.isNotBlank()
                     ) {
-                        add(
-                            CarStatusEvent.Error(
-                                message =
-                                    message,
-                                sessionGeneration =
-                                    sessionGeneration,
-                                requestId =
-                                    requestId,
+                        val restoredCommand =
+                            CanonicalCommand(
                                 command =
-                                    CanonicalCommand(
-                                        command =
-                                            commandName,
-                                        value =
-                                            commandValue
-                                    )
+                                    commandName,
+                                value =
+                                    commandValue
                             )
-                        )
+
+                        when (eventType) {
+                            EVENT_TYPE_ERROR -> {
+                                val message =
+                                    encodedEvent.getString(
+                                        "message"
+                                    )
+
+                                if (message.isNotBlank()) {
+                                    add(
+                                        CarStatusEvent.Error(
+                                            message =
+                                                message,
+                                            sessionGeneration =
+                                                sessionGeneration,
+                                            requestId =
+                                                requestId,
+                                            command =
+                                                restoredCommand
+                                        )
+                                    )
+                                }
+                            }
+
+                            EVENT_TYPE_COMMAND_RESPONSE -> {
+                                val status =
+                                    encodedEvent.getString(
+                                        "status"
+                                    )
+
+                                if (status.isNotBlank()) {
+                                    add(
+                                        CarStatusEvent.CommandResponse(
+                                            sessionGeneration =
+                                                sessionGeneration,
+                                            requestId =
+                                                requestId,
+                                            command =
+                                                restoredCommand,
+                                            status =
+                                                status
+                                        )
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -393,6 +458,12 @@ class BabyNodeApp : Application() {
 
         private const val KEY_TERMINAL_REQUEST_OUTCOMES =
             "terminal_request_outcomes"
+
+        private const val EVENT_TYPE_ERROR =
+            "error"
+
+        private const val EVENT_TYPE_COMMAND_RESPONSE =
+            "command_response"
 
         private const val KEY_NEXT_TRANSPORT_SESSION_GENERATION =
             "next_transport_session_generation"
