@@ -22,12 +22,18 @@ object BoundedFrameReader {
         val frame =
             StringBuilder()
 
+        var pendingCarriageReturn =
+            false
+
         while (true) {
             val character =
                 reader.read()
 
             if (character == -1) {
-                return if (frame.isEmpty()) {
+                return if (
+                    frame.isEmpty() &&
+                    !pendingCarriageReturn
+                ) {
                     null
                 } else {
                     throw IOException(
@@ -43,11 +49,22 @@ object BoundedFrameReader {
                 return frame.toString()
             }
 
-            if (nextCharacter != '\r') {
-                frame.append(
-                    nextCharacter
+            if (pendingCarriageReturn) {
+                throw IOException(
+                    "Frame contains an embedded carriage return"
                 )
             }
+
+            if (nextCharacter == '\r') {
+                pendingCarriageReturn =
+                    true
+
+                continue
+            }
+
+            frame.append(
+                nextCharacter
+            )
 
             if (frame.length > maximumLength) {
                 throw IOException(

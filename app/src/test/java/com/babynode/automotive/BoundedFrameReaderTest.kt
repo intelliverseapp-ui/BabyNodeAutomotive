@@ -50,6 +50,70 @@ class BoundedFrameReaderTest {
         )
     }
 
+
+    @Test
+    fun rejectsEmbeddedCarriageReturnInsideJsonString() {
+        val reader =
+            BufferedReader(
+                StringReader(
+                    "{\"command\":\"LOCK_\rDOORS\"}\n"
+                )
+            )
+
+        assertThrows(
+            IOException::class.java
+        ) {
+            BoundedFrameReader.read(
+                reader =
+                    reader,
+                maximumLength =
+                    4_096
+            )
+        }
+    }
+
+    @Test
+    fun rejectsEmbeddedCarriageReturnOutsideJsonString() {
+        val reader =
+            BufferedReader(
+                StringReader(
+                    "{\"status\":\"ok\"}\r trailing\n"
+                )
+            )
+
+        assertThrows(
+            IOException::class.java
+        ) {
+            BoundedFrameReader.read(
+                reader =
+                    reader,
+                maximumLength =
+                    4_096
+            )
+        }
+    }
+
+    @Test
+    fun rejectsMultipleCarriageReturnsBeforeNewline() {
+        val reader =
+            BufferedReader(
+                StringReader(
+                    "hello\r\r\n"
+                )
+            )
+
+        assertThrows(
+            IOException::class.java
+        ) {
+            BoundedFrameReader.read(
+                reader =
+                    reader,
+                maximumLength =
+                    4_096
+            )
+        }
+    }
+
     @Test
     fun returnsEmptyStringForEmptyFrame() {
         val reader =
