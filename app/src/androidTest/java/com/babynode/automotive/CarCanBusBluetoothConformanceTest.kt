@@ -668,6 +668,312 @@ class CarCanBusBluetoothConformanceTest {
             }
         }
 
+
+    @Test
+    fun reverseOrderResponsesRemainCorrelatedToTheirRequests() =
+        runBlocking {
+            val connection =
+                ReverseOrderResponseConnection()
+
+            val transport =
+                CarCanBusBluetooth()
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection
+                )
+
+                val eventsDeferred =
+                    async(
+                        start =
+                            CoroutineStart.UNDISPATCHED
+                    ) {
+                        withTimeout(
+                            5_000L
+                        ) {
+                            transport
+                                .status()
+                                .filter { event ->
+                                    event is
+                                        CarStatusEvent.CommandSent ||
+                                        event is
+                                            CarStatusEvent.CommandResponse
+                                }
+                                .take(
+                                    4
+                                )
+                                .toList()
+                        }
+                    }
+
+                val lockRequest =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "LOCK_DOORS"
+                        )
+                    )
+
+                val headlightsRequest =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "HEADLIGHTS_ON"
+                        )
+                    )
+
+                val events =
+                    eventsDeferred.await()
+
+                val responses =
+                    events.filterIsInstance<
+                        CarStatusEvent.CommandResponse
+                    >()
+
+                assertEquals(
+                    2,
+                    responses.size
+                )
+
+                val firstResponse =
+                    responses[
+                        0
+                    ]
+
+                val secondResponse =
+                    responses[
+                        1
+                    ]
+
+                assertEquals(
+                    headlightsRequest.requestId,
+                    firstResponse.requestId
+                )
+
+                assertEquals(
+                    headlightsRequest.command,
+                    firstResponse.command
+                )
+
+                assertEquals(
+                    lockRequest.requestId,
+                    secondResponse.requestId
+                )
+
+                assertEquals(
+                    lockRequest.command,
+                    secondResponse.command
+                )
+
+                assertEquals(
+                    firstResponse,
+                    CarRequestEventMatcher.selectBest(
+                        events =
+                            events,
+                        request =
+                            headlightsRequest
+                    )
+                )
+
+                assertEquals(
+                    secondResponse,
+                    CarRequestEventMatcher.selectBest(
+                        events =
+                            events,
+                        request =
+                            lockRequest
+                    )
+                )
+
+                assertFalse(
+                    events.any { event ->
+                        event is
+                            CarStatusEvent.Error &&
+                            (
+                                CarRequestEventMatcher.matches(
+                                    event =
+                                        event,
+                                    request =
+                                        lockRequest
+                                ) ||
+                                CarRequestEventMatcher.matches(
+                                    event =
+                                        event,
+                                    request =
+                                        headlightsRequest
+                                )
+                            )
+                    }
+                )
+
+                val terminalEvents =
+                    transport.close()
+
+                assertFalse(
+                    terminalEvents.any { event ->
+                        CarRequestEventMatcher.matches(
+                            event =
+                                event,
+                            request =
+                                lockRequest
+                        ) ||
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    headlightsRequest
+                            )
+                    }
+                )
+            } finally {
+                transport.close()
+            }
+        }
+
+
+    private class ReverseOrderResponseConnection :
+        RfcommConnection {
+
+        override var isConnected =
+            false
+            private set
+
+        private val peerWriter =
+            PipedOutputStream()
+
+        override val inputStream =
+            PipedInputStream(
+                peerWriter
+            )
+
+        private val currentPacket =
+            ByteArrayOutputStream()
+
+        private val requests =
+            mutableListOf<
+                Pair<Long, String>
+            >()
+
+        override val outputStream:
+            OutputStream =
+            object : OutputStream() {
+
+                override fun write(
+                    value: Int
+                ) {
+                    currentPacket.write(
+                        value
+                    )
+                }
+
+                override fun write(
+                    bytes: ByteArray,
+                    offset: Int,
+                    length: Int
+                ) {
+                    currentPacket.write(
+                        bytes,
+                        offset,
+                        length
+                    )
+                }
+
+                override fun flush() {
+                    val packet =
+                        currentPacket
+                            .toString(
+                                StandardCharsets.UTF_8.name()
+                            )
+                            .trim()
+
+                    currentPacket.reset()
+
+                    val json =
+                        JSONObject(
+                            packet
+                        )
+
+                    requests +=
+                        json.getLong(
+                            "id"
+                        ) to
+                            json.getString(
+                                "command"
+                            )
+
+                    if (
+                        requests.size ==
+                        2
+                    ) {
+                        requests
+                            .asReversed()
+                            .forEach {
+                                (
+                                    requestId,
+                                    command
+                                ) ->
+
+                                val response =
+                                    JSONObject()
+                                        .put(
+                                            "id",
+                                            requestId
+                                        )
+                                        .put(
+                                            "version",
+                                            BabyNodeProtocol.VERSION
+                                        )
+                                        .put(
+                                            "type",
+                                            "response"
+                                        )
+                                        .put(
+                                            "command",
+                                            command
+                                        )
+                                        .put(
+                                            "status",
+                                            "ok"
+                                        )
+                                        .toString() +
+                                        "\n"
+
+                                peerWriter.write(
+                                    response.toByteArray(
+                                        StandardCharsets.UTF_8
+                                    )
+                                )
+
+                                peerWriter.flush()
+                            }
+                    }
+                }
+            }
+
+        override fun connect() {
+            isConnected =
+                true
+        }
+
+        override fun close() {
+            isConnected =
+                false
+
+            runCatching {
+                peerWriter.close()
+            }
+
+            runCatching {
+                inputStream.close()
+            }
+
+            runCatching {
+                currentPacket.close()
+            }
+        }
+    }
+
     private class FlushTriggeredResponseConnection(
         private val responseCommand:
             String =
