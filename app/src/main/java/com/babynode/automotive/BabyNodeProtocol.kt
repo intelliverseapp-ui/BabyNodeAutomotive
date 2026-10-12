@@ -73,6 +73,259 @@ object BabyNodeProtocol {
             vehicleCommands == "stub_only"
     }
 
+    fun hasDuplicateTopLevelKeys(
+        packet: String
+    ): Boolean {
+        val keys =
+            mutableSetOf<String>()
+
+        var objectDepth =
+            0
+
+        var arrayDepth =
+            0
+
+        var index =
+            0
+
+        var previousSignificantCharacter:
+            Char? = null
+
+        while (index < packet.length) {
+            val character =
+                packet[index]
+
+            when (character) {
+                '{' -> {
+                    objectDepth +=
+                        1
+
+                    previousSignificantCharacter =
+                        character
+
+                    index +=
+                        1
+                }
+
+                '}' -> {
+                    objectDepth -=
+                        1
+
+                    previousSignificantCharacter =
+                        character
+
+                    index +=
+                        1
+                }
+
+                '[' -> {
+                    arrayDepth +=
+                        1
+
+                    previousSignificantCharacter =
+                        character
+
+                    index +=
+                        1
+                }
+
+                ']' -> {
+                    arrayDepth -=
+                        1
+
+                    previousSignificantCharacter =
+                        character
+
+                    index +=
+                        1
+                }
+
+                '"' -> {
+                    val parsedString =
+                        parseJsonString(
+                            packet =
+                                packet,
+                            openingQuoteIndex =
+                                index
+                        ) ?: return false
+
+                    val stringValue =
+                        parsedString.first
+
+                    val closingQuoteIndex =
+                        parsedString.second
+
+                    var nextIndex =
+                        closingQuoteIndex +
+                            1
+
+                    while (
+                        nextIndex <
+                        packet.length &&
+                        packet[nextIndex].isWhitespace()
+                    ) {
+                        nextIndex +=
+                            1
+                    }
+
+                    val isTopLevelKey =
+                        objectDepth == 1 &&
+                            arrayDepth == 0 &&
+                            (
+                                previousSignificantCharacter ==
+                                    '{' ||
+                                    previousSignificantCharacter ==
+                                    ','
+                            ) &&
+                            nextIndex <
+                            packet.length &&
+                            packet[nextIndex] ==
+                                ':'
+
+                    if (
+                        isTopLevelKey &&
+                        !keys.add(
+                            stringValue
+                        )
+                    ) {
+                        return true
+                    }
+
+                    previousSignificantCharacter =
+                        '"'
+
+                    index =
+                        closingQuoteIndex +
+                            1
+                }
+
+                else -> {
+                    if (!character.isWhitespace()) {
+                        previousSignificantCharacter =
+                            character
+                    }
+
+                    index +=
+                        1
+                }
+            }
+        }
+
+        return false
+    }
+
+    private fun parseJsonString(
+        packet: String,
+        openingQuoteIndex: Int
+    ): Pair<String, Int>? {
+        val value =
+            StringBuilder()
+
+        var index =
+            openingQuoteIndex +
+                1
+
+        while (index < packet.length) {
+            val character =
+                packet[index]
+
+            if (character == '"') {
+                return value.toString() to index
+            }
+
+            if (character != '\\') {
+                value.append(
+                    character
+                )
+
+                index +=
+                    1
+
+                continue
+            }
+
+            index +=
+                1
+
+            if (index >= packet.length) {
+                return null
+            }
+
+            when (val escaped = packet[index]) {
+                '"',
+                '\\',
+                '/' ->
+                    value.append(
+                        escaped
+                    )
+
+                'b' ->
+                    value.append(
+                        '\b'
+                    )
+
+                'f' ->
+                    value.append(
+                        '\u000C'
+                    )
+
+                'n' ->
+                    value.append(
+                        '\n'
+                    )
+
+                'r' ->
+                    value.append(
+                        '\r'
+                    )
+
+                't' ->
+                    value.append(
+                        '\t'
+                    )
+
+                'u' -> {
+                    val unicodeEnd =
+                        index +
+                            5
+
+                    if (unicodeEnd > packet.length) {
+                        return null
+                    }
+
+                    val hexadecimal =
+                        packet.substring(
+                            index +
+                                1,
+                            unicodeEnd
+                        )
+
+                    val codePoint =
+                        hexadecimal.toIntOrNull(
+                            radix =
+                                16
+                        ) ?: return null
+
+                    value.append(
+                        codePoint.toChar()
+                    )
+
+                    index =
+                        unicodeEnd -
+                            1
+                }
+
+                else ->
+                    return null
+            }
+
+            index +=
+                1
+        }
+
+        return null
+    }
+
     const val MAX_REASON_LENGTH =
         256
 

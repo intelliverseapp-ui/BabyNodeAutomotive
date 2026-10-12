@@ -969,6 +969,19 @@ class CarCanBusBluetooth : CarCanTransport {
         packet: String
     ) {
         try {
+            if (
+                BabyNodeProtocol.hasDuplicateTopLevelKeys(
+                    packet
+                )
+            ) {
+                Log.w(
+                    TAG,
+                    "Response contains duplicate top-level keys"
+                )
+
+                return
+            }
+
             val json =
                 JSONObject(
                     packet

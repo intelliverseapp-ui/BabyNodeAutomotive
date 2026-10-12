@@ -333,4 +333,69 @@ class BabyNodeProtocolTest {
         )
     }
 
+
+    @Test
+    fun acceptsPacketWithUniqueTopLevelKeys() {
+        assertFalse(
+            BabyNodeProtocol.hasDuplicateTopLevelKeys(
+                """{"id":1,"version":1,"type":"response","status":"ok"}"""
+            )
+        )
+    }
+
+    @Test
+    fun detectsDuplicateTopLevelId() {
+        assertTrue(
+            BabyNodeProtocol.hasDuplicateTopLevelKeys(
+                """{"id":1,"id":2,"version":1,"type":"response"}"""
+            )
+        )
+    }
+
+    @Test
+    fun detectsDuplicateTopLevelStatus() {
+        assertTrue(
+            BabyNodeProtocol.hasDuplicateTopLevelKeys(
+                """{"id":1,"status":"ok","status":"error"}"""
+            )
+        )
+    }
+
+    @Test
+    fun ignoresKeyLikeTextInsideStringValues() {
+        assertFalse(
+            BabyNodeProtocol.hasDuplicateTopLevelKeys(
+                """{"id":1,"reason":"embedded \"id\":2 text"}"""
+            )
+        )
+    }
+
+    @Test
+    fun ignoresNestedKeysWhenCheckingTopLevelEnvelope() {
+        assertFalse(
+            BabyNodeProtocol.hasDuplicateTopLevelKeys(
+                """{"id":1,"metadata":{"id":2}}"""
+            )
+        )
+    }
+
+
+    @Test
+    fun detectsDuplicateTopLevelKeyUsingUnicodeEscape() {
+        assertTrue(
+            BabyNodeProtocol.hasDuplicateTopLevelKeys(
+                """{"id":1,"\u0069d":2}"""
+            )
+        )
+    }
+
+    @Test
+    fun ignoresStructuralCharactersInsideStringValues() {
+        assertFalse(
+            BabyNodeProtocol.hasDuplicateTopLevelKeys(
+                """{"id":1,"reason":"{[\"]}:,id"}"""
+            )
+        )
+    }
+
 }
