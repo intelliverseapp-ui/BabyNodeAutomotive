@@ -119,13 +119,14 @@ class BabyNodeApp : Application() {
      * This can later support an explicit user-facing action such as
      * "Forget approved BabyNodeCAN."
      */
-    fun clearApprovedBabyNodeCanAddress() {
-        preferences
+    fun clearApprovedBabyNodeCanAddress():
+        Boolean {
+        return preferences
             .edit()
             .remove(
                 KEY_APPROVED_BABYNODECAN_ADDRESS
             )
-            .apply()
+            .commit()
     }
 
     private val preferences by lazy {
