@@ -50,7 +50,10 @@ private enum class VoiceRequestState {
 fun VoiceInputSection(
     dispatcher: CarCommandDispatcher,
     status: CarStatusEvent?,
-    eventHistory: List<CarStatusEvent>
+    eventHistory: List<CarStatusEvent>,
+    recognitionLauncherForTest:
+        (((String?) -> Unit) -> Unit)? =
+        null
 ) {
     var recognizedText by remember {
         mutableStateOf("")
@@ -145,26 +148,56 @@ fun VoiceInputSection(
         }
     }
 
+    val applyRecognitionResult:
+        (String?) -> Unit = { recognizedResult ->
+
+        activeRequest =
+            null
+
+        pendingConfirmation =
+            null
+
+        transportStatusForCurrentRequest =
+            null
+
+        rejectionReason =
+            null
+
+        failureMessage =
+            null
+
+        val spoken =
+            recognizedResult
+                ?.trim()
+                .orEmpty()
+
+        recognizedText =
+            spoken
+
+        if (spoken.isBlank()) {
+            Log.i(
+                TAG,
+                "Voice recognition returned no speech"
+            )
+
+            requestState =
+                VoiceRequestState.NO_SPEECH
+        } else {
+            Log.i(
+                TAG,
+                "Recognized voice command awaiting user review"
+            )
+
+            requestState =
+                VoiceRequestState.REVIEW_REQUIRED
+        }
+    }
+
     val voiceLauncher =
         rememberLauncherForActivityResult(
             contract =
                 ActivityResultContracts.StartActivityForResult()
         ) { result ->
-
-            activeRequest =
-                null
-
-            pendingConfirmation =
-                null
-
-            transportStatusForCurrentRequest =
-                null
-
-            rejectionReason =
-                null
-
-            failureMessage =
-                null
 
             if (
                 result.resultCode !=
@@ -181,40 +214,16 @@ fun VoiceInputSection(
                 return@rememberLauncherForActivityResult
             }
 
-            val matches =
+            val spoken =
                 result.data
                     ?.getStringArrayListExtra(
                         RecognizerIntent.EXTRA_RESULTS
                     )
-
-            val spoken =
-                matches
                     ?.firstOrNull()
-                    ?.trim()
-                    .orEmpty()
 
-            recognizedText =
+            applyRecognitionResult(
                 spoken
-
-            if (spoken.isBlank()) {
-                Log.i(
-                    TAG,
-                    "Voice recognition returned no speech"
-                )
-
-                requestState =
-                    VoiceRequestState.NO_SPEECH
-
-                return@rememberLauncherForActivityResult
-            }
-
-            Log.i(
-                TAG,
-                "Recognized voice command awaiting user review"
             )
-
-            requestState =
-                VoiceRequestState.REVIEW_REQUIRED
         }
 
     Column(
@@ -274,9 +283,18 @@ fun VoiceInputSection(
                         )
                     }
 
-                voiceLauncher.launch(
-                    recognitionIntent
-                )
+                val testLauncher =
+                    recognitionLauncherForTest
+
+                if (testLauncher != null) {
+                    testLauncher(
+                        applyRecognitionResult
+                    )
+                } else {
+                    voiceLauncher.launch(
+                        recognitionIntent
+                    )
+                }
             }
         ) {
             Text(
