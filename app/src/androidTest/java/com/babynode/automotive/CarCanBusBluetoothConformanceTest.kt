@@ -2021,6 +2021,917 @@ class CarCanBusBluetoothConformanceTest {
         }
 
 
+    @Test
+    fun malformedJsonReportsGeneralErrorAndPendingRequestIsResolvedByLaterValidResponse() =
+        runBlocking {
+            val connection =
+                ScriptedSequenceResponseConnection(
+                    listOf(
+                        "{ not valid json \n",
+                        validResponsePacket(
+                            id = 1L,
+                            command = "LOCK_DOORS",
+                            status = "ok",
+                            sessionId = TEST_PEER_SESSION_ID
+                        )
+                    )
+                )
+
+            val transport =
+                CarCanBusBluetooth()
+
+            val observedEvents =
+                Collections.synchronizedList(
+                    mutableListOf<CarStatusEvent>()
+                )
+
+            val collector =
+                launch(
+                    start =
+                        CoroutineStart.UNDISPATCHED
+                ) {
+                    transport
+                        .status()
+                        .collect { event ->
+                            observedEvents +=
+                                event
+                        }
+                }
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
+                )
+
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "LOCK_DOORS"
+                        )
+                    )
+
+                withTimeout(
+                    5_000L
+                ) {
+                    while (
+                        observedEvents.none {
+                            it is
+                                CarStatusEvent.CommandResponse &&
+                                CarRequestEventMatcher.matches(
+                                    event =
+                                        it,
+                                    request =
+                                        request
+                                )
+                        } ||
+                        observedEvents.none {
+                            it is
+                                CarStatusEvent.Error &&
+                                !it.isRequestSpecific
+                        }
+                    ) {
+                        delay(
+                            10L
+                        )
+                    }
+                }
+
+                val generalErrors =
+                    observedEvents.filter { event ->
+                        event is CarStatusEvent.Error &&
+                            !event.isRequestSpecific
+                    }
+
+                assertEquals(
+                    1,
+                    generalErrors.size
+                )
+
+                val generalError =
+                    generalErrors.single() as CarStatusEvent.Error
+
+                assertTrue(
+                    generalError.message.contains(
+                        "Invalid response from BabyNodeCAN",
+                        ignoreCase =
+                            true
+                    )
+                )
+
+                val responses =
+                    observedEvents.filter { event ->
+                        event is CarStatusEvent.CommandResponse &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+
+                assertEquals(
+                    1,
+                    responses.size
+                )
+
+                val response =
+                    responses.single() as CarStatusEvent.CommandResponse
+
+                assertEquals(
+                    "ok",
+                    response.status
+                )
+
+                assertEquals(
+                    response,
+                    CarRequestEventMatcher.selectBest(
+                        events =
+                            observedEvents.toList(),
+                        request =
+                            request
+                    )
+                )
+
+                assertFalse(
+                    transport
+                        .close()
+                        .any { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+                )
+            } finally {
+                collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
+
+    @Test
+    fun missingProtocolVersionIsIgnoredAndPendingRequestIsResolvedByLaterValidResponse() =
+        runBlocking {
+            val invalidPacket =
+                JSONObject()
+                    .put("id", 1L)
+                    .put("type", "response")
+                    .put("command", "LOCK_DOORS")
+                    .put("status", "ok")
+                    .put("session_id", TEST_PEER_SESSION_ID)
+                    .toString() + "\n"
+
+            val connection =
+                ScriptedSequenceResponseConnection(
+                    listOf(
+                        invalidPacket,
+                        validResponsePacket(
+                            id = 1L,
+                            command = "LOCK_DOORS",
+                            status = "ok",
+                            sessionId = TEST_PEER_SESSION_ID
+                        )
+                    )
+                )
+
+            val transport =
+                CarCanBusBluetooth()
+
+            val observedEvents =
+                Collections.synchronizedList(
+                    mutableListOf<CarStatusEvent>()
+                )
+
+            val collector =
+                launch(
+                    start =
+                        CoroutineStart.UNDISPATCHED
+                ) {
+                    transport
+                        .status()
+                        .collect { event ->
+                            observedEvents +=
+                                event
+                        }
+                }
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
+                )
+
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "LOCK_DOORS"
+                        )
+                    )
+
+                withTimeout(
+                    5_000L
+                ) {
+                    while (
+                        observedEvents.none {
+                            it is
+                                CarStatusEvent.CommandResponse &&
+                                CarRequestEventMatcher.matches(
+                                    event =
+                                        it,
+                                    request =
+                                        request
+                                )
+                        }
+                    ) {
+                        delay(
+                            10L
+                        )
+                    }
+                }
+
+                assertFalse(
+                    observedEvents.any { event ->
+                        event is CarStatusEvent.Error &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+                )
+
+                val responses =
+                    observedEvents.filter { event ->
+                        event is CarStatusEvent.CommandResponse &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+
+                assertEquals(
+                    1,
+                    responses.size
+                )
+
+                val response =
+                    responses.single() as CarStatusEvent.CommandResponse
+
+                assertEquals(
+                    "ok",
+                    response.status
+                )
+
+                assertEquals(
+                    response,
+                    CarRequestEventMatcher.selectBest(
+                        events =
+                            observedEvents.toList(),
+                        request =
+                            request
+                    )
+                )
+
+                assertFalse(
+                    transport
+                        .close()
+                        .any { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+                )
+            } finally {
+                collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
+
+    @Test
+    fun wrongProtocolVersionIsIgnoredAndPendingRequestIsResolvedByLaterValidResponse() =
+        runBlocking {
+            val invalidPacket =
+                JSONObject()
+                    .put("id", 1L)
+                    .put("version", BabyNodeProtocol.VERSION + 1)
+                    .put("type", "response")
+                    .put("command", "LOCK_DOORS")
+                    .put("status", "ok")
+                    .put("session_id", TEST_PEER_SESSION_ID)
+                    .toString() + "\n"
+
+            val connection =
+                ScriptedSequenceResponseConnection(
+                    listOf(
+                        invalidPacket,
+                        validResponsePacket(
+                            id = 1L,
+                            command = "LOCK_DOORS",
+                            status = "ok",
+                            sessionId = TEST_PEER_SESSION_ID
+                        )
+                    )
+                )
+
+            val transport =
+                CarCanBusBluetooth()
+
+            val observedEvents =
+                Collections.synchronizedList(
+                    mutableListOf<CarStatusEvent>()
+                )
+
+            val collector =
+                launch(
+                    start =
+                        CoroutineStart.UNDISPATCHED
+                ) {
+                    transport
+                        .status()
+                        .collect { event ->
+                            observedEvents +=
+                                event
+                        }
+                }
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
+                )
+
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "LOCK_DOORS"
+                        )
+                    )
+
+                withTimeout(
+                    5_000L
+                ) {
+                    while (
+                        observedEvents.none {
+                            it is
+                                CarStatusEvent.CommandResponse &&
+                                CarRequestEventMatcher.matches(
+                                    event =
+                                        it,
+                                    request =
+                                        request
+                                )
+                        }
+                    ) {
+                        delay(
+                            10L
+                        )
+                    }
+                }
+
+                assertFalse(
+                    observedEvents.any { event ->
+                        event is CarStatusEvent.Error &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+                )
+
+                val responses =
+                    observedEvents.filter { event ->
+                        event is CarStatusEvent.CommandResponse &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+
+                assertEquals(
+                    1,
+                    responses.size
+                )
+
+                val response =
+                    responses.single() as CarStatusEvent.CommandResponse
+
+                assertEquals(
+                    "ok",
+                    response.status
+                )
+
+                assertEquals(
+                    response,
+                    CarRequestEventMatcher.selectBest(
+                        events =
+                            observedEvents.toList(),
+                        request =
+                            request
+                    )
+                )
+
+                assertFalse(
+                    transport
+                        .close()
+                        .any { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+                )
+            } finally {
+                collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
+
+    @Test
+    fun nonnumericRequestIdIsIgnoredAndPendingRequestIsResolvedByLaterValidResponse() =
+        runBlocking {
+            val invalidPacket =
+                JSONObject()
+                    .put("id", "one")
+                    .put("version", BabyNodeProtocol.VERSION)
+                    .put("type", "response")
+                    .put("command", "LOCK_DOORS")
+                    .put("status", "ok")
+                    .put("session_id", TEST_PEER_SESSION_ID)
+                    .toString() + "\n"
+
+            val connection =
+                ScriptedSequenceResponseConnection(
+                    listOf(
+                        invalidPacket,
+                        validResponsePacket(
+                            id = 1L,
+                            command = "LOCK_DOORS",
+                            status = "ok",
+                            sessionId = TEST_PEER_SESSION_ID
+                        )
+                    )
+                )
+
+            val transport =
+                CarCanBusBluetooth()
+
+            val observedEvents =
+                Collections.synchronizedList(
+                    mutableListOf<CarStatusEvent>()
+                )
+
+            val collector =
+                launch(
+                    start =
+                        CoroutineStart.UNDISPATCHED
+                ) {
+                    transport
+                        .status()
+                        .collect { event ->
+                            observedEvents +=
+                                event
+                        }
+                }
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
+                )
+
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "LOCK_DOORS"
+                        )
+                    )
+
+                withTimeout(
+                    5_000L
+                ) {
+                    while (
+                        observedEvents.none {
+                            it is
+                                CarStatusEvent.CommandResponse &&
+                                CarRequestEventMatcher.matches(
+                                    event =
+                                        it,
+                                    request =
+                                        request
+                                )
+                        }
+                    ) {
+                        delay(
+                            10L
+                        )
+                    }
+                }
+
+                assertFalse(
+                    observedEvents.any { event ->
+                        event is CarStatusEvent.Error &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+                )
+
+                val responses =
+                    observedEvents.filter { event ->
+                        event is CarStatusEvent.CommandResponse &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+
+                assertEquals(
+                    1,
+                    responses.size
+                )
+
+                val response =
+                    responses.single() as CarStatusEvent.CommandResponse
+
+                assertEquals(
+                    "ok",
+                    response.status
+                )
+
+                assertEquals(
+                    response,
+                    CarRequestEventMatcher.selectBest(
+                        events =
+                            observedEvents.toList(),
+                        request =
+                            request
+                    )
+                )
+
+                assertFalse(
+                    transport
+                        .close()
+                        .any { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+                )
+            } finally {
+                collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
+
+    @Test
+    fun malformedReasonIsIgnoredAndPendingRequestIsResolvedByLaterValidResponse() =
+        runBlocking {
+            val invalidPacket =
+                JSONObject()
+                    .put("id", 1L)
+                    .put("version", BabyNodeProtocol.VERSION)
+                    .put("type", "response")
+                    .put("command", "LOCK_DOORS")
+                    .put("status", "error")
+                    .put("reason", "control\u0000character")
+                    .put("session_id", TEST_PEER_SESSION_ID)
+                    .toString() + "\n"
+
+            val connection =
+                ScriptedSequenceResponseConnection(
+                    listOf(
+                        invalidPacket,
+                        validResponsePacket(
+                            id = 1L,
+                            command = "LOCK_DOORS",
+                            status = "ok",
+                            sessionId = TEST_PEER_SESSION_ID
+                        )
+                    )
+                )
+
+            val transport =
+                CarCanBusBluetooth()
+
+            val observedEvents =
+                Collections.synchronizedList(
+                    mutableListOf<CarStatusEvent>()
+                )
+
+            val collector =
+                launch(
+                    start =
+                        CoroutineStart.UNDISPATCHED
+                ) {
+                    transport
+                        .status()
+                        .collect { event ->
+                            observedEvents +=
+                                event
+                        }
+                }
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection,
+                    peerSessionIdForTest =
+                        TEST_PEER_SESSION_ID
+                )
+
+                val request =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "LOCK_DOORS"
+                        )
+                    )
+
+                withTimeout(
+                    5_000L
+                ) {
+                    while (
+                        observedEvents.none {
+                            it is
+                                CarStatusEvent.CommandResponse &&
+                                CarRequestEventMatcher.matches(
+                                    event =
+                                        it,
+                                    request =
+                                        request
+                                )
+                        }
+                    ) {
+                        delay(
+                            10L
+                        )
+                    }
+                }
+
+                assertFalse(
+                    observedEvents.any { event ->
+                        event is CarStatusEvent.Error &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+                )
+
+                val responses =
+                    observedEvents.filter { event ->
+                        event is CarStatusEvent.CommandResponse &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                    }
+
+                assertEquals(
+                    1,
+                    responses.size
+                )
+
+                val response =
+                    responses.single() as CarStatusEvent.CommandResponse
+
+                assertEquals(
+                    "ok",
+                    response.status
+                )
+
+                assertEquals(
+                    response,
+                    CarRequestEventMatcher.selectBest(
+                        events =
+                            observedEvents.toList(),
+                        request =
+                            request
+                    )
+                )
+
+                assertFalse(
+                    transport
+                        .close()
+                        .any { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    request
+                            )
+                        }
+                )
+            } finally {
+                collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
+
+    @Test
+    fun invalidHandshakeCapabilitiesFailsClosedAndDoesNotInstallSession() =
+        runBlocking {
+            val invalidHandshakeResponse =
+                JSONObject()
+                    .put("id", 1L)
+                    .put("version", BabyNodeProtocol.VERSION)
+                    .put("type", "response")
+                    .put("command", "protocol.handshake")
+                    .put("status", "ok")
+                    .put("session_id", TEST_PEER_SESSION_ID)
+                    .put("module", "unsupported_module")
+                    .put("can_transmit", false)
+                    .put("vehicle_commands", "stub_only")
+                    .toString() + "\n"
+
+            val connection =
+                ScriptedSequenceResponseConnection(
+                    listOf(
+                        invalidHandshakeResponse
+                    )
+                )
+
+            val transport =
+                CarCanBusBluetooth()
+
+            val observedEvents =
+                Collections.synchronizedList(
+                    mutableListOf<CarStatusEvent>()
+                )
+
+            val collector =
+                launch(
+                    start =
+                        CoroutineStart.UNDISPATCHED
+                ) {
+                    transport
+                        .status()
+                        .collect { event ->
+                            observedEvents +=
+                                event
+                        }
+                }
+
+            try {
+                transport.installConnectionForTest(
+                    connection =
+                        connection
+                )
+
+                val handshakeRequest =
+                    transport.sendCommand(
+                        CanonicalCommand(
+                            command =
+                                "protocol.handshake"
+                        )
+                    )
+
+                withTimeout(
+                    5_000L
+                ) {
+                    while (
+                        observedEvents.none {
+                            it is
+                                CarStatusEvent.Error &&
+                                CarRequestEventMatcher.matches(
+                                    event =
+                                        it,
+                                    request =
+                                        handshakeRequest
+                                )
+                        }
+                    ) {
+                        delay(
+                            10L
+                        )
+                    }
+                }
+
+                val handshakeErrors =
+                    observedEvents.filter { event ->
+                        event is CarStatusEvent.Error &&
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    handshakeRequest
+                            )
+                    }
+
+                assertEquals(
+                    1,
+                    handshakeErrors.size
+                )
+
+                val handshakeError =
+                    handshakeErrors.single() as CarStatusEvent.Error
+
+                assertTrue(
+                    handshakeError.message.contains(
+                        "invalid session identity or unsupported capabilities",
+                        ignoreCase =
+                            true
+                    )
+                )
+
+                assertFalse(
+                    observedEvents.any { event ->
+                        event is CarStatusEvent.CommandResponse
+                    }
+                )
+
+                // Verify no peer session is installed: a post-handshake command must fail closed
+                val postHandshakeResult =
+                    runCatching {
+                        transport.sendCommand(
+                            CanonicalCommand(
+                                command =
+                                    "LOCK_DOORS"
+                            )
+                        )
+                    }
+
+                assertTrue(
+                    postHandshakeResult.isFailure
+                )
+
+                val exception =
+                    postHandshakeResult.exceptionOrNull()
+
+                assertTrue(
+                    exception is IOException
+                )
+
+                assertTrue(
+                    exception?.message?.contains(
+                        "peer session is not negotiated",
+                        ignoreCase =
+                            true
+                    ) == true
+                )
+
+                assertFalse(
+                    transport
+                        .close()
+                        .any { event ->
+                            CarRequestEventMatcher.matches(
+                                event =
+                                    event,
+                                request =
+                                    handshakeRequest
+                            )
+                        }
+                )
+            } finally {
+                collector.cancelAndJoin()
+                transport.close()
+            }
+        }
+
+
     private class DelayedReadFailureConnection :
         RfcommConnection {
 
@@ -2271,4 +3182,115 @@ class CarCanBusBluetoothConformanceTest {
             }
         }
     }
+
+    private class ScriptedSequenceResponseConnection(
+        private val responsesToSend:
+            List<String>
+    ) : RfcommConnection {
+
+        override var isConnected =
+            false
+            private set
+
+        private val peerWriter =
+            PipedOutputStream()
+
+        override val inputStream =
+            PipedInputStream(
+                peerWriter
+            )
+
+        private val writtenBytes =
+            ByteArrayOutputStream()
+
+        private val responseReleased =
+            AtomicBoolean(
+                false
+            )
+
+        override val outputStream:
+            OutputStream =
+            object : OutputStream() {
+
+                override fun write(
+                    value: Int
+                ) {
+                    writtenBytes.write(
+                        value
+                    )
+                }
+
+                override fun write(
+                    bytes: ByteArray,
+                    offset: Int,
+                    length: Int
+                ) {
+                    writtenBytes.write(
+                        bytes,
+                        offset,
+                        length
+                    )
+                }
+
+                override fun flush() {
+                    if (
+                        responseReleased.compareAndSet(
+                            false,
+                            true
+                        )
+                    ) {
+                        for (rawPacket in responsesToSend) {
+                            peerWriter.write(
+                                rawPacket.toByteArray(
+                                    StandardCharsets.UTF_8
+                                )
+                            )
+
+                            peerWriter.flush()
+                        }
+                    }
+                }
+            }
+
+        override fun connect() {
+            isConnected =
+                true
+        }
+
+        override fun close() {
+            isConnected =
+                false
+
+            runCatching {
+                peerWriter.close()
+            }
+
+            runCatching {
+                inputStream.close()
+            }
+
+            runCatching {
+                writtenBytes.close()
+            }
+        }
+    }
+
+    companion object {
+        private fun validResponsePacket(
+            id: Long,
+            command: String,
+            status: String,
+            sessionId: Long
+        ): String {
+            return JSONObject()
+                .put("id", id)
+                .put("version", BabyNodeProtocol.VERSION)
+                .put("type", "response")
+                .put("command", command)
+                .put("status", status)
+                .put("session_id", sessionId)
+                .toString() + "\n"
+        }
+    }
 }
+
