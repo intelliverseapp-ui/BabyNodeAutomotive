@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.babynode.automotive.BuildConfig
 import com.babynode.automotive.CarConnectionState
 import com.babynode.automotive.CarCommandDispatcher
 import com.babynode.automotive.CarStatusEvent
@@ -24,8 +25,16 @@ fun AutomotiveScreen(
     connectionState: CarConnectionState,
     status: CarStatusEvent?,
     eventHistory: List<CarStatusEvent>,
+    restoredTerminalOutcome: CarStatusEvent? = null,
+    onRestoredOutcomeDismissed: () -> Unit = {},
     modifier: Modifier = Modifier,
-    onModuleSelected: (ModuleType) -> Unit = {}
+    onModuleSelected: (ModuleType) -> Unit = {},
+    onApproveDevice: (String) -> Unit = {},
+    onForgetDevice: () -> Unit = {},
+    onRetryConnection: () -> Unit = {},
+    debugToolsVisible:
+        Boolean =
+        BuildConfig.DEBUG
 ) {
     Log.i(TAG, "Render AutomotiveScreen(): moduleType=${moduleType.uiLabel}")
 
@@ -99,14 +108,6 @@ fun AutomotiveScreen(
                         onModuleSelected(ModuleType.SINGLE_CAN)
                     }
                 )
-                DropdownMenuItem(
-                    text = { Text(ModuleType.DUAL_CAN.uiLabel) },
-                    onClick = {
-                        Log.i(TAG, "Module selected → ${ModuleType.DUAL_CAN.uiLabel}")
-                        moduleExpanded = false
-                        onModuleSelected(ModuleType.DUAL_CAN)
-                    }
-                )
             }
         }
 
@@ -130,36 +131,190 @@ fun AutomotiveScreen(
             style = MaterialTheme.typography.bodyMedium
         )
 
+        when (connectionState) {
+            CarConnectionState.Disconnected,
+            is CarConnectionState.Failed -> {
+                Spacer(
+                    modifier =
+                        Modifier.height(
+                            12.dp
+                        )
+                )
+
+                Button(
+                    onClick =
+                        onRetryConnection
+                ) {
+                    Text(
+                        text =
+                            "Retry Connection"
+                    )
+                }
+            }
+
+            is CarConnectionState.Connecting,
+            is CarConnectionState.Connected -> {
+                // No retry control while connecting or connected.
+            }
+        }
+
+        val approvalRequest =
+            status as?
+                CarStatusEvent.DeviceApprovalRequired
+
+        if (approvalRequest != null) {
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        16.dp
+                    )
+            )
+
+            Surface(
+                tonalElevation =
+                    2.dp,
+                shape =
+                    MaterialTheme.shapes.medium,
+                modifier =
+                    Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier =
+                        Modifier.padding(
+                            16.dp
+                        )
+                ) {
+                    Text(
+                        text =
+                            "Approve BabyNodeCAN",
+                        style =
+                            MaterialTheme.typography.titleMedium
+                    )
+
+                    Spacer(
+                        modifier =
+                            Modifier.height(
+                                8.dp
+                            )
+                    )
+
+                    Text(
+                        text =
+                            approvalRequest.deviceName +
+                                "\n" +
+                                approvalRequest.deviceAddress,
+                        style =
+                            MaterialTheme.typography.bodyMedium
+                    )
+
+                    Spacer(
+                        modifier =
+                            Modifier.height(
+                                12.dp
+                            )
+                    )
+
+                    Button(
+                        onClick = {
+                            onApproveDevice(
+                                approvalRequest.deviceAddress
+                            )
+                        }
+                    ) {
+                        Text(
+                            text =
+                                "Approve and Connect"
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(
+            modifier =
+                Modifier.height(
+                    12.dp
+                )
+        )
+
+        OutlinedButton(
+            onClick =
+                onForgetDevice
+        ) {
+            Text(
+                text =
+                    "Forget approved BabyNodeCAN"
+            )
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
 
         // -------------------------------
         // Voice Input Section
         // -------------------------------
         Log.i(TAG, "Render VoiceInputSection(): latestEvent=$status")
-        VoiceInputSection(
-            dispatcher = dispatcher,
-            status = status
-        )
+        key(
+            dispatcher
+        ) {
+            VoiceInputSection(
+                dispatcher =
+                    dispatcher,
+                status =
+                    status,
+                eventHistory =
+                    eventHistory,
+                restoredTerminalOutcome =
+                    restoredTerminalOutcome,
+                onRestoredOutcomeDismissed =
+                    onRestoredOutcomeDismissed
+            )
+        }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        if (debugToolsVisible) {
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        24.dp
+                    )
+            )
 
-        // -------------------------------
-        // Command Test Section
-        // -------------------------------
-        Log.i(TAG, "Render CommandTestSection(): latestEvent=$status")
-        CommandTestSection(
-            dispatcher = dispatcher,
-            status = status
-        )
+            // Debug-only free-text command interface.
+            Log.d(
+                TAG,
+                "Render CommandTestSection(): latestEvent=$status"
+            )
 
-        Spacer(modifier = Modifier.height(24.dp))
+            key(
+                dispatcher
+            ) {
+                CommandTestSection(
+                    dispatcher =
+                        dispatcher,
+                    status =
+                        status,
+                    eventHistory =
+                        eventHistory
+                )
+            }
 
-        // -------------------------------
-        // CAN Debug Section
-        // -------------------------------
-        Log.i(TAG, "Render CanDebugSection(): eventHistorySize=${eventHistory.size}")
-        CanDebugSection(
-            eventHistory = eventHistory
-        )
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        24.dp
+                    )
+            )
+
+            // Debug-only transport event history.
+            Log.d(
+                TAG,
+                "Render CanDebugSection(): " +
+                    "eventHistorySize=${eventHistory.size}"
+            )
+
+            CanDebugSection(
+                eventHistory =
+                    eventHistory
+            )
+        }
     }
 }

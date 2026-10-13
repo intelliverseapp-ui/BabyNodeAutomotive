@@ -1,25 +1,25 @@
 package com.babynode.automotive
 
 import android.annotation.SuppressLint
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothSocket
 import android.util.Log
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStream
@@ -28,14 +28,33 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-class CarCanBusBluetooth : CarCanTransport {
+class CarCanBusBluetooth(
+    private val deviceProvider:
+        BluetoothDeviceProvider =
+        AndroidBluetoothDeviceProvider,
+    private val connectionFactory:
+        RfcommConnectionFactory =
+        AndroidRfcommConnectionFactory,
+    private val responseTimeoutMillis:
+        Long =
+        RESPONSE_TIMEOUT_MILLIS
+) : CarCanTransport {
 
     companion object {
-        private const val TAG = "CarCanBusBluetooth"
-        private const val DEVICE_NAME = "BabyNodeCAN"
+        private const val TAG =
+            "CarCanBusBluetooth"
+
+        private const val DEVICE_NAME =
+            "BabyNodeCAN"
+
+        private const val PROTOCOL_HANDSHAKE_COMMAND =
+            "protocol.handshake"
 
         private const val RESPONSE_TIMEOUT_MILLIS =
             5_000L
+
+        private const val MAXIMUM_FRAME_LENGTH =
+            4_096
 
         private val SPP_UUID: UUID =
             UUID.fromString(
@@ -43,21 +62,47 @@ class CarCanBusBluetooth : CarCanTransport {
             )
     }
 
+    val sessionGeneration:
+        Long =
+        BabyNodeApp
+            .instance
+            .allocateTransportSessionGeneration()
+
+    init {
+        require(
+            responseTimeoutMillis >
+                0L
+        ) {
+            "Response timeout must be positive"
+        }
+    }
+
     private data class PendingCommand(
-        val command: CanonicalCommand,
-        val timeoutJob: Job
+        val request: CarCommandRequest,
+        val responseReceived: CompletableDeferred<Unit>
     )
 
     private val transportScope =
         CoroutineScope(
-            SupervisorJob() + Dispatchers.IO
+            SupervisorJob() +
+                Dispatchers.IO
         )
+
+    private val connectMutex =
+        Mutex()
 
     private val connectionMutex =
         Mutex()
 
     private val writeMutex =
         Mutex()
+
+    private val socketGeneration =
+        SocketGeneration()
+
+    @Volatile
+    private var activeSocketGeneration =
+        0L
 
     private val statusFlow =
         MutableSharedFlow<CarStatusEvent>(
@@ -71,52 +116,158 @@ class CarCanBusBluetooth : CarCanTransport {
         ConcurrentHashMap<Long, PendingCommand>()
 
     @Volatile
-    private var bluetoothSocket: BluetoothSocket? =
-        null
+    private var bluetoothSocket:
+        RfcommConnection? = null
 
     @Volatile
-    private var inputStream: InputStream? =
-        null
+    private var connectingSocket:
+        RfcommConnection? = null
 
     @Volatile
-    private var outputStream: OutputStream? =
-        null
+    private var inputStream:
+        InputStream? = null
 
     @Volatile
-    private var receiveJob: Job? =
-        null
+    private var outputStream:
+        OutputStream? = null
+
+    @Volatile
+    private var receiveJob:
+        Job? = null
+
+    /*
+     * Peer wire session_id negotiated by the validated handshake on the
+     * active RFCOMM connection. Distinct from the local sessionGeneration.
+     */
+    @Volatile
+    private var negotiatedPeerSessionId:
+        Long? = null
 
     @Volatile
     private var intentionalDisconnect =
         false
 
-    @SuppressLint("MissingPermission")
-    override suspend fun connect() {
-        Log.i(
-            TAG,
-            "Bluetooth connect()"
-        )
+    @Volatile
+    private var permanentlyClosed =
+        false
 
-        intentionalDisconnect = false
+    /**
+     * Installs a deterministic RFCOMM connection for transport
+     * conformance tests.
+     *
+     * This bypasses Android device discovery only. Send, receive,
+     * correlation, timeout, disconnect, and close behavior continue
+     * through the production transport state machine.
+     */
+    internal suspend fun installConnectionForTest(
+        connection: RfcommConnection,
+        transportName: String =
+            "Test RFCOMM",
+        peerSessionIdForTest: Long? =
+            null
+    ) {
+        check(
+            BuildConfig.DEBUG
+        ) {
+            "RFCOMM test installation is unavailable in release builds"
+        }
 
-        try {
-            val adapter =
-                BluetoothAdapter.getDefaultAdapter()
+        require(
+            peerSessionIdForTest == null ||
+                BabyNodeProtocol.parseSessionId(
+                    peerSessionIdForTest
+                ) != null
+        ) {
+            "Test peer session ID is invalid"
+        }
 
-            if (adapter == null) {
-                statusFlow.emit(
-                    CarStatusEvent.Error(
-                        "Bluetooth not supported"
-                    )
-                )
-
-                return
+        connectMutex.withLock {
+            check(
+                !permanentlyClosed
+            ) {
+                "Bluetooth transport is permanently closed"
             }
 
-            if (!adapter.isEnabled) {
+            intentionalDisconnect =
+                false
+
+            negotiatedPeerSessionId =
+                null
+
+            val connectionGeneration =
+                socketGeneration.advance()
+
+            withContext(
+                Dispatchers.IO
+            ) {
+                connection.connect()
+            }
+
+            val installed =
+                connectionMutex.withLock {
+                    if (
+                        permanentlyClosed ||
+                        intentionalDisconnect ||
+                        !connection.isConnected ||
+                        !socketGeneration.isCurrent(
+                            connectionGeneration
+                        )
+                    ) {
+                        false
+                    } else {
+                        negotiatedPeerSessionId =
+                            peerSessionIdForTest
+
+                        bluetoothSocket =
+                            connection
+
+                        inputStream =
+                            connection.inputStream
+
+                        outputStream =
+                            connection.outputStream
+
+                        activeSocketGeneration =
+                            connectionGeneration
+
+                        true
+                    }
+                }
+
+            if (!installed) {
+                runCatching {
+                    connection.close()
+                }
+
+                throw IOException(
+                    "Test RFCOMM connection could not be installed"
+                )
+            }
+
+            startReceiveLoop(
+                connectedSocket =
+                    connection,
+                connectedGeneration =
+                    connectionGeneration
+            )
+
+            statusFlow.emit(
+                CarStatusEvent.Connected(
+                    transportName =
+                        transportName
+                )
+            )
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    override suspend fun connect() {
+        connectMutex.withLock {
+            if (permanentlyClosed) {
                 statusFlow.emit(
                     CarStatusEvent.Error(
-                        "Bluetooth disabled"
+                        message =
+                            "Bluetooth transport is permanently closed"
                     )
                 )
 
@@ -138,231 +289,511 @@ class CarCanBusBluetooth : CarCanTransport {
                 return
             }
 
-            val device =
-                adapter.bondedDevices.firstOrNull {
-                    it.name == DEVICE_NAME
-                }
-
-            if (device == null) {
-                Log.e(
+            if (connectingSocket != null) {
+                Log.w(
                     TAG,
-                    "BabyNodeCAN not paired"
-                )
-
-                statusFlow.emit(
-                    CarStatusEvent.Error(
-                        "BabyNodeCAN not paired"
-                    )
+                    "RFCOMM connection attempt is already active"
                 )
 
                 return
             }
 
-            Log.i(
-                TAG,
-                "Found bonded device: ${device.name}"
-            )
+            intentionalDisconnect =
+                false
 
-            adapter.cancelDiscovery()
-
-            val newSocket =
-                device.createRfcommSocketToServiceRecord(
-                    SPP_UUID
-                )
+            val connectionGeneration =
+                socketGeneration.advance()
 
             Log.i(
                 TAG,
-                "Opening RFCOMM socket..."
+                "Starting Bluetooth connection"
             )
 
-            withContext(Dispatchers.IO) {
-                newSocket.connect()
-            }
+            var newSocket:
+                RfcommConnection? = null
 
-            connectionMutex.withLock {
-                bluetoothSocket =
+            try {
+                if (!deviceProvider.isSupported) {
+                    statusFlow.emit(
+                        CarStatusEvent.Error(
+                            message =
+                                "Bluetooth is not supported"
+                        )
+                    )
+
+                    return
+                }
+
+                if (!deviceProvider.isEnabled) {
+                    statusFlow.emit(
+                        CarStatusEvent.Error(
+                            message =
+                                "Bluetooth is disabled"
+                        )
+                    )
+
+                    return
+                }
+
+                val device =
+                    findApprovedBabyNodeCanDevice(
+                        deviceProvider
+                    ) ?: return
+
+                deviceProvider.cancelDiscovery()
+
+                newSocket =
+                    connectionFactory.create(
+                        device =
+                            device,
+                        serviceUuid =
+                            SPP_UUID
+                    )
+
+                connectingSocket =
                     newSocket
 
-                inputStream =
-                    newSocket.inputStream
-
-                outputStream =
-                    newSocket.outputStream
-            }
-
-            Log.i(
-                TAG,
-                "RFCOMM socket connected"
-            )
-
-            startReceiveLoop(
-                newSocket
-            )
-
-            statusFlow.emit(
-                CarStatusEvent.Connected(
-                    device.name ?: DEVICE_NAME
+                Log.i(
+                    TAG,
+                    "Opening RFCOMM socket"
                 )
-            )
-        } catch (e: Exception) {
-            Log.e(
-                TAG,
-                "RFCOMM connect failed",
-                e
-            )
 
-            cancelAllPendingCommands(
-                "Connection failed"
-            )
+                withContext(Dispatchers.IO) {
+                    newSocket.connect()
+                }
 
-            closeSocketResources()
+                if (
+                    permanentlyClosed ||
+                    intentionalDisconnect
+                ) {
+                    runCatching {
+                        newSocket.close()
+                    }
 
-            statusFlow.emit(
-                CarStatusEvent.Error(
-                    "RFCOMM connect failed: " +
-                        (
-                            e.message
-                                ?: e.javaClass.simpleName
-                        ),
+                    return
+                }
+
+                val installed =
+                    connectionMutex.withLock {
+                        if (
+                            permanentlyClosed ||
+                            intentionalDisconnect ||
+                            !socketGeneration.isCurrent(
+                                connectionGeneration
+                            ) ||
+                            connectingSocket !==
+                            newSocket
+                        ) {
+                            false
+                        } else {
+                            negotiatedPeerSessionId =
+                                null
+
+                            bluetoothSocket =
+                                newSocket
+
+                            inputStream =
+                                newSocket.inputStream
+
+                            outputStream =
+                                newSocket.outputStream
+
+                            activeSocketGeneration =
+                                connectionGeneration
+
+                            true
+                        }
+                    }
+
+                if (!installed) {
+                    runCatching {
+                        newSocket.close()
+                    }
+
+                    return
+                }
+
+                connectingSocket =
+                    null
+
+                Log.i(
+                    TAG,
+                    "RFCOMM socket connected"
+                )
+
+                startReceiveLoop(
+                    connectedSocket =
+                        newSocket,
+                    connectedGeneration =
+                        connectionGeneration
+                )
+
+                if (
+                    socketGeneration.isCurrent(
+                        connectionGeneration
+                    )
+                ) {
+                    statusFlow.emit(
+                        CarStatusEvent.Connected(
+                            transportName =
+                                device.name ?: DEVICE_NAME
+                        )
+                    )
+                }
+            } catch (e: CancellationException) {
+                runCatching {
+                    newSocket?.close()
+                }
+
+                connectingSocket =
+                    null
+
+                Log.i(
+                    TAG,
+                    "Bluetooth connection attempt cancelled"
+                )
+
+                throw e
+            } catch (e: Exception) {
+                runCatching {
+                    newSocket?.close()
+                }
+
+                connectingSocket =
+                    null
+
+                Log.e(
+                    TAG,
+                    "RFCOMM connection failed",
                     e
                 )
-            )
 
-            statusFlow.emit(
-                CarStatusEvent.Disconnected(
-                    "Bluetooth"
+                cancelAllPendingCommands(
+                    reason =
+                        "Connection failed"
                 )
-            )
+
+                closeSocketResources()
+
+                statusFlow.emit(
+                    CarStatusEvent.Error(
+                        message =
+                            "RFCOMM connection failed: " +
+                                (
+                                    e.message
+                                        ?: e.javaClass.simpleName
+                                ),
+                        throwable =
+                            e
+                    )
+                )
+            } finally {
+                if (
+                    connectingSocket ===
+                    newSocket
+                ) {
+                    connectingSocket =
+                        null
+                }
+            }
         }
     }
 
-    override suspend fun disconnect() {
+    private suspend fun findApprovedBabyNodeCanDevice(
+        deviceProvider: BluetoothDeviceProvider
+    ): BluetoothDeviceIdentity? {
+        val bondedDevices =
+            deviceProvider.bondedDevices
+
+        val approvedAddress =
+            BabyNodeApp
+                .instance
+                .approvedBabyNodeCanAddress()
+
+        if (approvedAddress != null) {
+            val approvedDevice =
+                bondedDevices.firstOrNull {
+                    it.address.equals(
+                        approvedAddress,
+                        ignoreCase = true
+                    )
+                }
+
+            if (approvedDevice == null) {
+                statusFlow.emit(
+                    CarStatusEvent.Error(
+                        message =
+                            "The approved BabyNodeCAN device " +
+                                "is no longer paired"
+                    )
+                )
+
+                return null
+            }
+
+            if (
+                approvedDevice.name !=
+                DEVICE_NAME
+            ) {
+                statusFlow.emit(
+                    CarStatusEvent.Error(
+                        message =
+                            "The approved Bluetooth device " +
+                                "does not identify as BabyNodeCAN"
+                    )
+                )
+
+                return null
+            }
+
+            Log.i(
+                TAG,
+                "Approved BabyNodeCAN identity verified"
+            )
+
+            return approvedDevice
+        }
+
+        val matchingDevices =
+            bondedDevices.filter {
+                it.name == DEVICE_NAME
+            }
+
+        if (matchingDevices.isEmpty()) {
+            statusFlow.emit(
+                CarStatusEvent.Error(
+                    message =
+                        "BabyNodeCAN is not paired"
+                )
+            )
+
+            return null
+        }
+
+        if (matchingDevices.size > 1) {
+            statusFlow.emit(
+                CarStatusEvent.Error(
+                    message =
+                        "More than one paired device is named " +
+                            DEVICE_NAME
+                )
+            )
+
+            return null
+        }
+
+        val uniquelyMatchedDevice =
+            matchingDevices.single()
+
         Log.i(
             TAG,
-            "Bluetooth disconnect()"
+            "Explicit approval required for BabyNodeCAN identity"
         )
 
-        intentionalDisconnect = true
+        statusFlow.emit(
+            CarStatusEvent.DeviceApprovalRequired(
+                deviceName =
+                    uniquelyMatchedDevice.name
+                        ?: DEVICE_NAME,
+                deviceAddress =
+                    uniquelyMatchedDevice.address
+            )
+        )
+
+        return null
+    }
+
+    override suspend fun disconnect() {
+        intentionalDisconnect =
+            true
+
+        socketGeneration.invalidate()
+
+        activeSocketGeneration =
+            0L
+
+        negotiatedPeerSessionId =
+            null
+
+        Log.i(
+            TAG,
+            "Disconnecting Bluetooth transport"
+        )
+
+        runCatching {
+            connectingSocket?.close()
+        }
+
+        connectingSocket =
+            null
 
         cancelAllPendingCommands(
-            "Transport disconnected"
+            reason =
+                "Transport disconnected"
         )
 
         stopReceiveLoop()
-
         closeSocketResources()
 
         statusFlow.emit(
             CarStatusEvent.Disconnected(
-                "Bluetooth"
+                transportName =
+                    "Bluetooth"
             )
         )
     }
 
     override suspend fun sendCommand(
         command: CanonicalCommand
-    ) {
+    ): CarCommandRequest {
         val messageId =
             nextMessageId.getAndIncrement()
 
-        val packet =
-            JSONObject().apply {
-                put(
-                    "id",
-                    messageId
-                )
+        val request =
+            CarCommandRequest(
+                sessionGeneration =
+                    sessionGeneration,
+                requestId =
+                    messageId,
+                command =
+                    command
+            )
 
-                put(
-                    "type",
-                    "command"
-                )
+        if (permanentlyClosed) {
+            val message =
+                "Send failed: Bluetooth transport is closed"
 
-                put(
-                    "command",
-                    command.command
-                )
+            emitRequestError(
+                request =
+                    request,
+                message =
+                    message
+            )
 
-                if (command.value != null) {
-                    put(
-                        "value",
-                        command.value
-                    )
-                }
-            }.toString()
-
-        Log.i(
-            TAG,
-            "TX: $packet"
-        )
-
-        val timeoutJob =
-            transportScope.launch(
-                start = CoroutineStart.LAZY
-            ) {
-                delay(
-                    RESPONSE_TIMEOUT_MILLIS
-                )
-
-                val timedOutCommand =
-                    pendingCommands.remove(
-                        messageId
-                    )
-
-                if (timedOutCommand != null) {
-                    Log.e(
-                        TAG,
-                        "Response timeout: " +
-                            "id=$messageId, " +
-                            "command=${command.command}"
-                    )
-
-                    statusFlow.emit(
-                        CarStatusEvent.Error(
-                            "BabyNodeCAN response timeout: " +
-                                "id=$messageId " +
-                                "command=${command.command}"
-                        )
-                    )
-                }
-            }
+            throw IOException(
+                message
+            )
+        }
 
         val pendingCommand =
             PendingCommand(
-                command = command,
-                timeoutJob = timeoutJob
+                request =
+                    request,
+                responseReceived =
+                    CompletableDeferred()
             )
 
-        pendingCommands[messageId] =
-            pendingCommand
+        var writeAttemptStarted =
+            false
 
-        timeoutJob.start()
+        var writeCompleted =
+            false
+
+        var writeGeneration =
+            0L
 
         try {
             writeMutex.withLock {
+                if (
+                    permanentlyClosed ||
+                    intentionalDisconnect
+                ) {
+                    throw IOException(
+                        "Bluetooth transport is not available"
+                    )
+                }
+
                 val activeSocket =
                     bluetoothSocket
 
+                val writeSocketGeneration =
+                    activeSocketGeneration
+
                 val activeOutputStream =
                     outputStream
+
+                writeGeneration =
+                    writeSocketGeneration
 
                 if (
                     activeSocket == null ||
                     !activeSocket.isConnected ||
                     activeOutputStream == null
                 ) {
-                    removePendingCommand(
-                        messageId
+                    throw IOException(
+                        "BabyNodeCAN is not connected"
                     )
-
-                    statusFlow.emit(
-                        CarStatusEvent.Error(
-                            "Send failed: " +
-                                "BabyNodeCAN is not connected"
-                        )
-                    )
-
-                    return
                 }
+
+                val isHandshake =
+                    command.command ==
+                        PROTOCOL_HANDSHAKE_COMMAND
+
+                if (isHandshake) {
+                    negotiatedPeerSessionId =
+                        null
+                }
+
+                val peerSessionId =
+                    negotiatedPeerSessionId
+
+                if (
+                    !isHandshake &&
+                    peerSessionId == null
+                ) {
+                    throw IOException(
+                        "BabyNodeCAN peer session is not negotiated"
+                    )
+                }
+
+                val packet =
+                    JSONObject().apply {
+                        put(
+                            "id",
+                            messageId
+                        )
+
+                        put(
+                            "version",
+                            BabyNodeProtocol.VERSION
+                        )
+
+                        put(
+                            "type",
+                            "command"
+                        )
+
+                        put(
+                            "command",
+                            command.command
+                        )
+
+                        if (peerSessionId != null) {
+                            put(
+                                "session_id",
+                                peerSessionId
+                            )
+                        }
+
+                        if (command.value != null) {
+                            put(
+                                "value",
+                                command.value
+                            )
+                        }
+                    }.toString()
+
+                pendingCommands[
+                    messageId
+                ] = pendingCommand
+
+                Log.i(
+                    TAG,
+                    "Sending command request id=$messageId"
+                )
+
+                writeAttemptStarted =
+                    true
 
                 withContext(Dispatchers.IO) {
                     activeOutputStream.write(
@@ -373,72 +804,314 @@ class CarCanBusBluetooth : CarCanTransport {
 
                     activeOutputStream.flush()
                 }
+
+                writeCompleted =
+                    true
+            }
+
+            if (!writeCompleted) {
+                throw IOException(
+                    "Bluetooth write did not complete"
+                )
             }
 
             statusFlow.emit(
                 CarStatusEvent.CommandSent(
-                    command
+                    sessionGeneration =
+                        request.sessionGeneration,
+                    requestId =
+                        messageId,
+                    command =
+                        command
                 )
             )
 
             Log.i(
                 TAG,
-                "CommandSent emitted: " +
+                "Command request written: " +
                     "id=$messageId, " +
                     "command=${command.command}"
             )
-        } catch (e: Exception) {
-            removePendingCommand(
-                messageId
+
+            startResponseTimeout(
+                messageId =
+                    messageId,
+                pendingCommand =
+                    pendingCommand
             )
 
-            Log.e(
-                TAG,
-                "Packet send failed",
-                e
-            )
-
-            statusFlow.emit(
-                CarStatusEvent.Error(
-                    "Send failed: " +
-                        (
-                            e.message
-                                ?: e.javaClass.simpleName
-                        ),
-                    e
+            return request
+        } catch (e: CancellationException) {
+            if (writeAttemptStarted) {
+                /*
+                 * A blocking write or flush may have transferred
+                 * bytes before cancellation was observed. Preserve
+                 * request tracking so a response or timeout can still
+                 * resolve the possibly transmitted command.
+                 */
+                startResponseTimeout(
+                    messageId =
+                        messageId,
+                    pendingCommand =
+                        pendingCommand
                 )
+
+                val message =
+                    "Command send cancelled after write started: " +
+                        "outcome unknown"
+
+                Log.w(
+                    TAG,
+                    "Command cancellation outcome unknown: " +
+                        "id=$messageId"
+                )
+
+                throw CarCommandOutcomeUnknownException(
+                    request =
+                        request,
+                    message =
+                        message,
+                    cause =
+                        e
+                )
+            }
+
+            pendingCommands.remove(
+                messageId,
+                pendingCommand
             )
 
-            handleConnectionLoss(
-                "Send failed"
+            pendingCommand
+                .responseReceived
+                .cancel()
+
+            transportScope.launch {
+                emitRequestError(
+                    request =
+                        request,
+                    message =
+                        "Command send cancelled before write",
+                    throwable =
+                        e
+                )
+            }
+
+            Log.i(
+                TAG,
+                "Command send cancelled before write: " +
+                    "id=$messageId"
             )
+
+            throw e
+        } catch (e: Exception) {
+            val writeOutcome =
+                BluetoothWriteOutcome.classify(
+                    writeAttemptStarted =
+                        writeAttemptStarted,
+                    writeCompleted =
+                        writeCompleted
+                )
+
+            when (writeOutcome) {
+                BluetoothWriteOutcome.DEFINITELY_NOT_TRANSMITTED -> {
+                    pendingCommands.remove(
+                        messageId,
+                        pendingCommand
+                    )
+
+                    pendingCommand
+                        .responseReceived
+                        .cancel()
+
+                    val message =
+                        "Send failed before write: " +
+                            (
+                                e.message
+                                    ?: e.javaClass.simpleName
+                            )
+
+                    Log.e(
+                        TAG,
+                        message,
+                        e
+                    )
+
+                    emitRequestError(
+                        request =
+                            request,
+                        message =
+                            message,
+                        throwable =
+                            e
+                    )
+                }
+
+                BluetoothWriteOutcome.OUTCOME_UNKNOWN,
+                BluetoothWriteOutcome.TRANSMITTED -> {
+                    val message =
+                        "Bluetooth write failed after transmission " +
+                            "may have started"
+
+                    Log.e(
+                        TAG,
+                        "$message: outcome unknown",
+                        e
+                    )
+
+                    /*
+                     * Connection-loss cleanup removes the pending
+                     * request and emits its single correlated terminal
+                     * error with an outcome-unknown message.
+                     *
+                     * Do not start a response timeout or emit another
+                     * request error here.
+                     */
+                    handleConnectionLoss(
+                        reason =
+                            message,
+                        expectedGeneration =
+                            writeGeneration
+                    )
+
+                    throw CarCommandOutcomeUnknownException(
+                        request =
+                            request,
+                        message =
+                            "$message: outcome unknown",
+                        cause =
+                            e
+                    )
+                }
+            }
+
+            throw e
         }
     }
 
-    override fun status(): Flow<CarStatusEvent> {
+    override fun status():
+        Flow<CarStatusEvent> {
         return statusFlow
     }
 
-    override fun close() {
+    override fun close():
+        List<CarStatusEvent> {
+        if (permanentlyClosed) {
+            return emptyList()
+        }
+
+        permanentlyClosed =
+            true
+
+        intentionalDisconnect =
+            true
+
+        socketGeneration.invalidate()
+
+        activeSocketGeneration =
+            0L
+
+        negotiatedPeerSessionId =
+            null
+
         Log.i(
             TAG,
-            "Bluetooth close()"
+            "Closing Bluetooth transport permanently"
         )
 
-        intentionalDisconnect = true
+        runCatching {
+            connectingSocket?.close()
+        }
 
-        cancelAllPendingCommandsImmediately()
+        connectingSocket =
+            null
+
+        val terminalEvents =
+            cancelAllPendingCommandsImmediately()
 
         receiveJob?.cancel()
-        receiveJob = null
+        receiveJob =
+            null
 
         closeSocketResourcesImmediately()
 
         transportScope.cancel()
+
+        return terminalEvents
+    }
+
+    private suspend fun emitRequestError(
+        request: CarCommandRequest,
+        message: String,
+        throwable: Throwable? = null
+    ) {
+        statusFlow.emit(
+            CarStatusEvent.Error(
+                message =
+                    message,
+                throwable =
+                    throwable,
+                sessionGeneration =
+                    request.sessionGeneration,
+                requestId =
+                    request.requestId,
+                command =
+                    request.command
+            )
+        )
+    }
+
+    private fun startResponseTimeout(
+        messageId: Long,
+        pendingCommand: PendingCommand
+    ) {
+        transportScope.launch {
+            try {
+                withTimeout(
+                    responseTimeoutMillis
+                ) {
+                    pendingCommand
+                        .responseReceived
+                        .await()
+                }
+            } catch (
+                e: TimeoutCancellationException
+            ) {
+                val removed =
+                    pendingCommands.remove(
+                        messageId,
+                        pendingCommand
+                    )
+
+                if (removed) {
+                    val request =
+                        pendingCommand.request
+
+                    val message =
+                        CarResponseTimeoutMessage.forRequest(
+                            request
+                        )
+
+                    Log.e(
+                        TAG,
+                        message
+                    )
+
+                    emitRequestError(
+                        request =
+                            request,
+                        message =
+                            message
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            }
+        }
     }
 
     private fun startReceiveLoop(
-        connectedSocket: BluetoothSocket
+        connectedSocket: RfcommConnection,
+        connectedGeneration: Long
     ) {
         receiveJob?.cancel()
 
@@ -459,37 +1132,44 @@ class CarCanBusBluetooth : CarCanTransport {
 
                 try {
                     while (
-                        connectedSocket.isConnected
+                        connectedSocket.isConnected &&
+                        !permanentlyClosed &&
+                        socketGeneration.isCurrent(
+                            connectedGeneration
+                        )
                     ) {
-                        val line =
-                            reader.readLine()
-                                ?: break
+                        val frame =
+                            BoundedFrameReader.read(
+                                reader =
+                                    reader,
+                                maximumLength =
+                                    MAXIMUM_FRAME_LENGTH
+                            ) ?: break
 
                         val packet =
-                            line.trim()
+                            frame
 
                         if (packet.isEmpty()) {
                             continue
                         }
-
-                        Log.i(
-                            TAG,
-                            "RX: $packet"
-                        )
 
                         processIncomingPacket(
                             packet
                         )
                     }
 
-                    if (!intentionalDisconnect) {
-                        Log.w(
-                            TAG,
-                            "Bluetooth receive loop reached EOF"
+                    if (
+                        !intentionalDisconnect &&
+                        !permanentlyClosed &&
+                        socketGeneration.isCurrent(
+                            connectedGeneration
                         )
-
+                    ) {
                         handleConnectionLoss(
-                            "Remote device disconnected"
+                            reason =
+                                "Remote device disconnected",
+                            expectedGeneration =
+                                connectedGeneration
                         )
                     }
                 } catch (e: CancellationException) {
@@ -500,7 +1180,13 @@ class CarCanBusBluetooth : CarCanTransport {
 
                     throw e
                 } catch (e: Exception) {
-                    if (!intentionalDisconnect) {
+                    if (
+                        !intentionalDisconnect &&
+                        !permanentlyClosed &&
+                        socketGeneration.isCurrent(
+                            connectedGeneration
+                        )
+                    ) {
                         Log.e(
                             TAG,
                             "Bluetooth receive failed",
@@ -509,17 +1195,27 @@ class CarCanBusBluetooth : CarCanTransport {
 
                         statusFlow.emit(
                             CarStatusEvent.Error(
-                                "Receive failed: " +
-                                    (
-                                        e.message
-                                            ?: e.javaClass.simpleName
-                                    ),
-                                e
+                                message =
+                                    "Receive failed: " +
+                                        (
+                                            e.message
+                                                ?: e.javaClass.simpleName
+                                        ),
+                                throwable =
+                                    e
                             )
                         )
 
                         handleConnectionLoss(
-                            "Receive failed"
+                            reason =
+                                "Receive failed",
+                            expectedGeneration =
+                                connectedGeneration
+                        )
+                    } else {
+                        Log.i(
+                            TAG,
+                            "Ignoring stale receive-loop failure"
                         )
                     }
                 } finally {
@@ -539,136 +1235,335 @@ class CarCanBusBluetooth : CarCanTransport {
         packet: String
     ) {
         try {
-            val json =
-                JSONObject(
-                    packet
-                )
-
-            val type =
-                json.optString(
-                    "type"
-                )
-
             if (
-                !type.equals(
-                    "response",
-                    ignoreCase = true
+                BabyNodeProtocol.hasDuplicateTopLevelKeys(
+                    packet
                 )
             ) {
                 Log.w(
                     TAG,
-                    "Ignoring unsupported packet type: $type"
+                    "Response contains duplicate top-level keys"
                 )
 
                 return
             }
 
-            if (!json.has("id")) {
+            val json =
+                JSONObject(
+                    packet
+                )
+
+            val typeValue =
+                json.opt(
+                    "type"
+                )
+
+            if (
+                !BabyNodeProtocol.validateResponseType(
+                    typeValue
+                )
+            ) {
                 Log.w(
                     TAG,
-                    "Response packet is missing id"
+                    "Unsupported incoming packet type"
+                )
+
+                return
+            }
+
+            val versionValue =
+                json.opt(
+                    "version"
+                )
+
+            if (
+                !BabyNodeProtocol.validateVersion(
+                    versionValue
+                )
+            ) {
+                Log.w(
+                    TAG,
+                    "Response contains invalid protocol version"
+                )
+
+                return
+            }
+
+            val idValue =
+                json.opt(
+                    "id"
+                )
+
+            if (
+                !BabyNodeProtocol.validateRequestId(
+                    idValue
+                )
+            ) {
+                Log.w(
+                    TAG,
+                    "Response contains invalid id"
                 )
 
                 return
             }
 
             val commandId =
-                json.optLong(
-                    "id",
-                    -1L
+                (idValue as Number)
+                    .toLong()
+
+            val commandValue =
+                json.opt(
+                    "command"
                 )
 
-            if (commandId < 0L) {
+            if (
+                commandValue !is String ||
+                commandValue.isBlank()
+            ) {
                 Log.w(
                     TAG,
-                    "Response packet contains an invalid id"
+                    "Response is missing command"
+                )
+
+                return
+            }
+
+            val responseCommand =
+                commandValue
+
+            val statusValue =
+                json.opt(
+                    "status"
+                )
+
+            if (
+                statusValue !is String
+            ) {
+                Log.w(
+                    TAG,
+                    "Response contains invalid status"
                 )
 
                 return
             }
 
             val responseStatus =
-                json.optString(
-                    "status",
-                    "unknown"
+                statusValue
+
+            if (
+                !BabyNodeProtocol.validateResponseStatus(
+                    responseStatus
+                )
+            ) {
+                Log.w(
+                    TAG,
+                    "Response contains unsupported status"
                 )
 
-            val responseCommand =
-                json.optString(
-                    "command",
-                    ""
+                return
+            }
+
+            val reasonValue =
+                json.opt(
+                    "reason"
                 )
+
+            if (
+                !BabyNodeProtocol.validateResponseReason(
+                    reasonValue
+                )
+            ) {
+                Log.w(
+                    TAG,
+                    "Response contains invalid reason"
+                )
+
+                return
+            }
 
             val reason =
-                json.optString(
-                    "reason",
+                if (reasonValue is String) {
+                    reasonValue
+                } else {
                     ""
-                )
-
-            Log.i(
-                TAG,
-                "Parsed response: " +
-                    "id=$commandId, " +
-                    "status=$responseStatus, " +
-                    "command=$responseCommand, " +
-                    "reason=$reason"
-            )
+                }
 
             val pendingCommand =
-                pendingCommands.remove(
+                pendingCommands[
                     commandId
-                )
+                ]
 
             if (pendingCommand == null) {
                 Log.w(
                     TAG,
-                    "Ignoring unexpected or duplicate response: " +
-                        "id=$commandId"
+                    "Ignoring unexpected, duplicate, or late " +
+                        "response id=$commandId"
                 )
 
                 return
+            }
+
+            val request =
+                pendingCommand.request
+
+            val expectedCommand =
+                request.command.command
+
+            val isHandshakeBootstrapResponse =
+                expectedCommand ==
+                    PROTOCOL_HANDSHAKE_COMMAND &&
+                    responseCommand ==
+                    PROTOCOL_HANDSHAKE_COMMAND
+
+            if (!isHandshakeBootstrapResponse) {
+                val responseSessionId =
+                    BabyNodeProtocol.parseSessionId(
+                        json.opt(
+                            "session_id"
+                        )
+                    )
+
+                val currentSessionId =
+                    negotiatedPeerSessionId
+
+                if (
+                    responseSessionId == null ||
+                    currentSessionId == null ||
+                    responseSessionId !=
+                    currentSessionId
+                ) {
+                    Log.w(
+                        TAG,
+                        "Ignoring response with missing, invalid, " +
+                            "or mismatched session_id: id=$commandId"
+                    )
+
+                    return
+                }
+            }
+
+            if (
+                !BabyNodeProtocol.validateResponseCommand(
+                    command =
+                        responseCommand,
+                    expectedCommand =
+                        expectedCommand
+                )
+            ) {
+                val removed =
+                    pendingCommands.remove(
+                        commandId,
+                        pendingCommand
+                    )
+
+                if (removed) {
+                    pendingCommand
+                        .responseReceived
+                        .complete(Unit)
+
+                    emitRequestError(
+                        request =
+                            request,
+                        message =
+                            "BabyNodeCAN response mismatch: " +
+                                "expected $expectedCommand, " +
+                                "received $responseCommand"
+                    )
+                }
+
+                return
+            }
+
+            if (
+                expectedCommand ==
+                    PROTOCOL_HANDSHAKE_COMMAND &&
+                responseStatus == "ok"
+            ) {
+                val capabilitiesValid =
+                    BabyNodeProtocol
+                        .validateHandshakeCapabilities(
+                            sessionId =
+                                json.opt(
+                                    "session_id"
+                                ),
+                            module =
+                                json.opt(
+                                    "module"
+                                ),
+                            canTransmit =
+                                json.opt(
+                                    "can_transmit"
+                                ),
+                            vehicleCommands =
+                                json.opt(
+                                    "vehicle_commands"
+                                )
+                        )
+
+                if (!capabilitiesValid) {
+                    val removed =
+                        pendingCommands.remove(
+                            commandId,
+                            pendingCommand
+                        )
+
+                    if (removed) {
+                        pendingCommand
+                            .responseReceived
+                            .complete(Unit)
+
+                        emitRequestError(
+                            request =
+                                request,
+                            message =
+                                "BabyNodeCAN handshake contains " +
+                                    "invalid session identity or " +
+                                    "unsupported capabilities"
+                        )
+                    }
+
+                    return
+                }
+            }
+
+            val removed =
+                pendingCommands.remove(
+                    commandId,
+                    pendingCommand
+                )
+
+            if (!removed) {
+                Log.w(
+                    TAG,
+                    "Response was already handled: id=$commandId"
+                )
+
+                return
+            }
+
+            if (
+                isHandshakeBootstrapResponse &&
+                responseStatus == "ok" &&
+                !permanentlyClosed &&
+                !intentionalDisconnect &&
+                bluetoothSocket != null
+            ) {
+                negotiatedPeerSessionId =
+                    BabyNodeProtocol.parseSessionId(
+                        json.opt(
+                            "session_id"
+                        )
+                    )
             }
 
             pendingCommand
-                .timeoutJob
-                .cancel()
-
-            val expectedCommand =
-                pendingCommand.command.command
-
-            if (
-                responseCommand.isNotBlank() &&
-                !responseCommand.equals(
-                    expectedCommand,
-                    ignoreCase = true
-                )
-            ) {
-                Log.e(
-                    TAG,
-                    "Response command mismatch: " +
-                        "id=$commandId, " +
-                        "expected=$expectedCommand, " +
-                        "received=$responseCommand"
-                )
-
-                statusFlow.emit(
-                    CarStatusEvent.Error(
-                        "BabyNodeCAN response mismatch: " +
-                            "expected $expectedCommand, " +
-                            "received $responseCommand"
-                    )
-                )
-
-                return
-            }
+                .responseReceived
+                .complete(Unit)
 
             val displayStatus =
                 if (
                     reason.isNotBlank() &&
-                    !responseStatus.equals(
-                        "ok",
-                        ignoreCase = true
-                    )
+                    responseStatus != "ok"
                 ) {
                     "$responseStatus: $reason"
                 } else {
@@ -677,49 +1572,44 @@ class CarCanBusBluetooth : CarCanTransport {
 
             Log.i(
                 TAG,
-                "Matched response: " +
+                "Matched BabyNodeCAN response: " +
                     "id=$commandId, " +
                     "command=$expectedCommand, " +
-                    "status=$displayStatus"
+                    "status=$responseStatus"
             )
 
             statusFlow.emit(
                 CarStatusEvent.CommandResponse(
-                    commandId = commandId,
-                    status = displayStatus
+                    sessionGeneration =
+                        request.sessionGeneration,
+                    requestId =
+                        commandId,
+                    command =
+                        request.command,
+                    status =
+                        displayStatus
                 )
             )
         } catch (e: Exception) {
             Log.e(
                 TAG,
-                "Invalid response packet: $packet",
+                "Invalid response packet",
                 e
             )
 
             statusFlow.emit(
                 CarStatusEvent.Error(
-                    "Invalid response from BabyNodeCAN: " +
-                        (
-                            e.message
-                                ?: e.javaClass.simpleName
-                        ),
-                    e
+                    message =
+                        "Invalid response from BabyNodeCAN: " +
+                            (
+                                e.message
+                                    ?: e.javaClass.simpleName
+                            ),
+                    throwable =
+                        e
                 )
             )
         }
-    }
-
-    private fun removePendingCommand(
-        messageId: Long
-    ) {
-        val pendingCommand =
-            pendingCommands.remove(
-                messageId
-            )
-
-        pendingCommand
-            ?.timeoutJob
-            ?.cancel()
     }
 
     private suspend fun cancelAllPendingCommands(
@@ -730,57 +1620,140 @@ class CarCanBusBluetooth : CarCanTransport {
                 .entries
                 .toList()
 
-        pendingCommands.clear()
-
         pendingEntries.forEach { entry ->
-            entry.value
-                .timeoutJob
-                .cancel()
+            val removed =
+                pendingCommands.remove(
+                    entry.key,
+                    entry.value
+                )
 
-            Log.w(
-                TAG,
-                "Cancelling pending command: " +
-                    "id=${entry.key}, " +
-                    "command=${entry.value.command.command}, " +
-                    "reason=$reason"
-            )
+            if (removed) {
+                val request =
+                    entry.value.request
+
+                entry.value
+                    .responseReceived
+                    .cancel()
+
+                Log.w(
+                    TAG,
+                    "Pending command cancelled: " +
+                        "id=${request.requestId}, " +
+                        "reason=$reason"
+                )
+
+                emitRequestError(
+                    request =
+                        request,
+                    message =
+                        "$reason: outcome unknown"
+                )
+            }
         }
     }
 
-    private fun cancelAllPendingCommandsImmediately() {
+    private fun cancelAllPendingCommandsImmediately():
+        List<CarStatusEvent> {
+        val terminalEvents =
+            mutableListOf<CarStatusEvent>()
+
         val pendingEntries =
             pendingCommands
                 .entries
                 .toList()
 
-        pendingCommands.clear()
-
         pendingEntries.forEach { entry ->
-            entry.value
-                .timeoutJob
-                .cancel()
+            val removed =
+                pendingCommands.remove(
+                    entry.key,
+                    entry.value
+                )
 
-            Log.w(
-                TAG,
-                "Closing pending command: " +
-                    "id=${entry.key}, " +
-                    "command=${entry.value.command.command}"
-            )
+            if (removed) {
+                val request =
+                    entry.value.request
+
+                entry.value
+                    .responseReceived
+                    .cancel()
+
+                Log.w(
+                    TAG,
+                    "Pending command closed with unknown outcome: " +
+                        "id=${request.requestId}"
+                )
+
+                val terminalEvent =
+                    CarStatusEvent.Error(
+                        message =
+                            "Transport closed: outcome unknown",
+                        sessionGeneration =
+                            request.sessionGeneration,
+                        requestId =
+                            request.requestId,
+                        command =
+                            request.command
+                    )
+
+                terminalEvents +=
+                    terminalEvent
+
+                statusFlow.tryEmit(
+                    terminalEvent
+                )
+            }
         }
+
+        return terminalEvents
     }
 
     private suspend fun handleConnectionLoss(
-        reason: String
+        reason: String,
+        expectedGeneration: Long
     ) {
-        cancelAllPendingCommands(
-            reason
-        )
+        if (
+            !socketGeneration.isCurrent(
+                expectedGeneration
+            )
+        ) {
+            Log.i(
+                TAG,
+                "Ignoring stale connection-loss notification"
+            )
+
+            return
+        }
 
         connectionMutex.withLock {
+            if (
+                !socketGeneration.isCurrent(
+                    expectedGeneration
+                ) ||
+                activeSocketGeneration !=
+                expectedGeneration
+            ) {
+                Log.i(
+                    TAG,
+                    "Ignoring stale connection-loss cleanup"
+                )
+
+                return@withLock
+            }
+
+            cancelAllPendingCommands(
+                reason =
+                    reason
+            )
+
             val hadConnection =
                 bluetoothSocket != null ||
                     inputStream != null ||
                     outputStream != null
+
+            socketGeneration.invalidate()
+
+            activeSocketGeneration =
+                0L
 
             closeSocketResourcesImmediately()
 
@@ -792,7 +1765,8 @@ class CarCanBusBluetooth : CarCanTransport {
 
                 statusFlow.emit(
                     CarStatusEvent.Disconnected(
-                        "Bluetooth"
+                        transportName =
+                            "Bluetooth"
                     )
                 )
             }
@@ -801,11 +1775,17 @@ class CarCanBusBluetooth : CarCanTransport {
 
     private suspend fun closeSocketResources() {
         connectionMutex.withLock {
+            activeSocketGeneration =
+                0L
+
             closeSocketResourcesImmediately()
         }
     }
 
     private fun closeSocketResourcesImmediately() {
+        negotiatedPeerSessionId =
+            null
+
         runCatching {
             inputStream?.close()
         }
@@ -818,13 +1798,20 @@ class CarCanBusBluetooth : CarCanTransport {
             bluetoothSocket?.close()
         }
 
-        inputStream = null
-        outputStream = null
-        bluetoothSocket = null
+        inputStream =
+            null
+
+        outputStream =
+            null
+
+        bluetoothSocket =
+            null
     }
 
     private fun stopReceiveLoop() {
         receiveJob?.cancel()
-        receiveJob = null
+
+        receiveJob =
+            null
     }
 }

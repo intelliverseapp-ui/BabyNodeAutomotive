@@ -1,5 +1,6 @@
 package com.babynode.automotive.ui
 
+import kotlinx.coroutines.delay
 import android.util.Log
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -9,126 +10,771 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.babynode.automotive.CarCommandDispatchResult
 import com.babynode.automotive.CarCommandDispatcher
+import com.babynode.automotive.CarCommandRequest
+import com.babynode.automotive.CarRequestEventMatcher
 import com.babynode.automotive.CarStatusEvent
 
-private const val TAG = "CommandTestSection"
+private const val TAG =
+    "CommandTestSection"
+
+private enum class TypedRequestState {
+    READY,
+    EDITING,
+    DISPATCHING,
+    CONFIRMATION_REQUIRED,
+    REJECTED,
+    SUBMITTED,
+    TIMED_OUT,
+    OUTCOME_UNKNOWN,
+    FAILED
+}
 
 @Composable
 fun CommandTestSection(
     dispatcher: CarCommandDispatcher,
-    status: CarStatusEvent?
+    status: CarStatusEvent?,
+    eventHistory: List<CarStatusEvent>
 ) {
-
-    Log.i(
-        TAG,
-        "Render CommandTestSection(): latestEvent=$status"
-    )
-
     var commandText by remember {
         mutableStateOf("")
     }
 
-    var localStatus by remember {
-        mutableStateOf("Ready")
+    var requestState by remember {
+        mutableStateOf(
+            TypedRequestState.READY
+        )
+    }
+
+    var pendingConfirmation by remember {
+        mutableStateOf<
+            CarCommandDispatchResult.ConfirmationRequired?
+        >(
+            null
+        )
+    }
+
+    var activeRequest by remember {
+        mutableStateOf<CarCommandRequest?>(
+            null
+        )
+    }
+
+    var transportStatusForCurrentRequest by remember {
+        mutableStateOf<CarStatusEvent?>(
+            null
+        )
+    }
+
+    var rejectionReason by remember {
+        mutableStateOf<String?>(
+            null
+        )
+    }
+
+    var failureMessage by remember {
+        mutableStateOf<String?>(
+            null
+        )
+    }
+
+    /*
+     * Accept only transport events whose request ID and canonical
+     * command match the exact typed request returned by the
+     * dispatcher.
+     *
+     * Voice requests, automatic config.module requests, previous
+     * typed requests, late responses, and unrelated transport events
+     * are ignored by this section.
+     */
+    LaunchedEffect(
+        status,
+        eventHistory,
+        activeRequest
+    ) {
+        val currentRequest =
+            activeRequest
+
+        if (currentRequest != null) {
+            transportStatusForCurrentRequest =
+                CarRequestEventMatcher.selectBest(
+                    events =
+                        eventHistory,
+                    request =
+                        currentRequest
+                )
+        }
+    }
+
+    LaunchedEffect(
+        activeRequest
+    ) {
+        val requestAtStart =
+            activeRequest
+                ?: return@LaunchedEffect
+
+        delay(
+            5_000L
+        )
+
+        if (
+            activeRequest ==
+            requestAtStart &&
+            transportStatusForCurrentRequest
+                !is CarStatusEvent.CommandResponse &&
+            transportStatusForCurrentRequest
+                !is CarStatusEvent.Error
+        ) {
+            requestState =
+                TypedRequestState.TIMED_OUT
+        }
     }
 
     Column(
-        modifier = Modifier.fillMaxWidth()
+        modifier =
+            Modifier.fillMaxWidth()
     ) {
-
         Text(
             text = "Command Tester",
-            style = MaterialTheme.typography.titleLarge
+            style =
+                MaterialTheme.typography.titleLarge
         )
 
         Spacer(
-            modifier = Modifier.height(8.dp)
+            modifier =
+                Modifier.height(
+                    8.dp
+                )
         )
 
         TextField(
-            value = commandText,
-            onValueChange = {
-                commandText = it
+            value =
+                commandText,
+            onValueChange = { updatedText ->
+                commandText =
+                    updatedText
 
-                Log.i(
-                    TAG,
-                    "User typed command: \"$commandText\""
-                )
+                requestState =
+                    if (updatedText.isBlank()) {
+                        TypedRequestState.READY
+                    } else {
+                        TypedRequestState.EDITING
+                    }
+
+                /*
+                 * Editing starts a new local request attempt.
+                 * Clear all identity and status belonging to the
+                 * preceding typed request.
+                 */
+                activeRequest =
+                    null
+
+                pendingConfirmation =
+                    null
+
+                transportStatusForCurrentRequest =
+                    null
+
+                rejectionReason =
+                    null
+
+                failureMessage =
+                    null
             },
             label = {
-                Text("Enter automotive command")
+                Text(
+                    text = "Enter automotive command"
+                )
             },
-            modifier = Modifier.fillMaxWidth()
+            singleLine = true,
+            modifier =
+                Modifier.fillMaxWidth()
         )
 
         Spacer(
-            modifier = Modifier.height(12.dp)
+            modifier =
+                Modifier.height(
+                    12.dp
+                )
         )
 
         Button(
+            enabled =
+                commandText.isNotBlank() &&
+                    requestState !=
+                    TypedRequestState.DISPATCHING,
             onClick = {
+                val submittedText =
+                    commandText.trim()
+
+                activeRequest =
+                    null
+
+                transportStatusForCurrentRequest =
+                    null
+
+                rejectionReason =
+                    null
+
+                failureMessage =
+                    null
+
+                if (submittedText.isBlank()) {
+                    requestState =
+                        TypedRequestState.READY
+
+                    return@Button
+                }
 
                 Log.i(
                     TAG,
-                    "Send Command clicked: \"$commandText\""
+                    "Supported typed request awaiting dispatch result"
                 )
 
-                dispatcher.handle(commandText)
+                requestState =
+                    TypedRequestState.DISPATCHING
 
-                localStatus =
-                    "Executed: $commandText"
-            }
-        ) {
+                dispatcher.handle(
+                    text =
+                        submittedText,
+                    onResult = { dispatchResult ->
+                        when (dispatchResult) {
+                            is CarCommandDispatchResult.Submitted -> {
+                                val request =
+                                    dispatchResult.request
 
-            Text("Send Command")
-        }
+                                activeRequest =
+                                    request
 
-        Spacer(
-            modifier = Modifier.height(16.dp)
-        )
+                                requestState =
+                                    TypedRequestState.SUBMITTED
 
-        val statusText = buildString {
+                                /*
+                                 * A fast response may already be the
+                                 * latest global event when the request
+                                 * identity reaches this callback.
+                                 */
+                                if (
+                                    status != null &&
+                                    CarRequestEventMatcher.matches(
+                                        event =
+                                            status,
+                                        request =
+                                            request
+                                    )
+                                ) {
+                                    transportStatusForCurrentRequest =
+                                        status
+                                }
 
-            append(localStatus)
+                                Log.i(
+                                    TAG,
+                                    "Typed request correlated: " +
+                                        "id=${request.requestId}, " +
+                                        "command=${request.command.command}"
+                                )
+                            }
 
-            if (status != null) {
+                            is CarCommandDispatchResult.ConfirmationRequired -> {
+                            activeRequest =
+                                null
 
-                append("\nTransport: ")
+                            transportStatusForCurrentRequest =
+                                null
 
-                append(
-                    when (status) {
+                            pendingConfirmation =
+                                dispatchResult
 
-                        is CarStatusEvent.Connected ->
-                            "Connected (${status.transportName})"
+                            rejectionReason =
+                                "explicit confirmation required for " +
+                                    dispatchResult.command.command
 
-                        is CarStatusEvent.Disconnected ->
-                            "Disconnected (${status.transportName})"
+                            requestState =
+                                TypedRequestState.CONFIRMATION_REQUIRED
 
-                        is CarStatusEvent.Error ->
-                            "Error: ${status.message}"
+                            Log.i(
+                                TAG,
+                                "Sensitive command retained for explicit " +
+                                    "confirmation"
+                            )
+                        }
 
-                        is CarStatusEvent.CommandSent ->
-                            "Command sent: ${status.command.command}"
+                        is CarCommandDispatchResult.OutcomeUnknown -> {
+                            pendingConfirmation =
+                                null
 
-                        is CarStatusEvent.CommandResponse ->
-                            "Response: ${status.status}"
+                            activeRequest =
+                                dispatchResult.request
+
+                            transportStatusForCurrentRequest =
+                                null
+
+                            failureMessage =
+                                dispatchResult.message
+
+                            requestState =
+                                TypedRequestState.OUTCOME_UNKNOWN
+
+                            Log.w(
+                                TAG,
+                                "Command transmission outcome unknown: " +
+                                    "id=${dispatchResult.request.requestId}"
+                            )
+                        }
+
+                        is CarCommandDispatchResult.Rejected -> {
+                                activeRequest =
+                                    null
+
+                                transportStatusForCurrentRequest =
+                                    null
+
+                                rejectionReason =
+                                    typedDispatchRejectionText(
+                                        dispatchResult.reason
+                                    )
+
+                                requestState =
+                                    TypedRequestState.REJECTED
+
+                                Log.i(
+                                    TAG,
+                                    "Typed request rejected by dispatcher"
+                                )
+                            }
+
+                            is CarCommandDispatchResult.Failed -> {
+                                activeRequest =
+                                    null
+
+                                transportStatusForCurrentRequest =
+                                    null
+
+                                failureMessage =
+                                    dispatchResult.message
+
+                                requestState =
+                                    TypedRequestState.FAILED
+
+                                Log.e(
+                                    TAG,
+                                    "Typed request dispatch failed"
+                                )
+                            }
+                        }
                     }
                 )
             }
+        ) {
+            Text(
+                text =
+                    if (
+                        requestState ==
+                        TypedRequestState.DISPATCHING
+                    ) {
+                        "Sending..."
+                    } else {
+                        "Send Command"
+                    }
+            )
         }
 
-        Log.i(
-            TAG,
-            "Status text rendered: $statusText"
+        val confirmation =
+            pendingConfirmation
+
+        if (
+            requestState ==
+            TypedRequestState.CONFIRMATION_REQUIRED &&
+            confirmation != null
+        ) {
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        12.dp
+                    )
+            )
+
+            Text(
+                text =
+                    "Confirm sensitive command: " +
+                        confirmation.command.command,
+                style =
+                    MaterialTheme.typography.bodyMedium
+            )
+
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        8.dp
+                    )
+            )
+
+            Button(
+                onClick = {
+                    pendingConfirmation =
+                        null
+
+                    requestState =
+                        TypedRequestState.DISPATCHING
+
+                    dispatcher.confirmSensitiveCommand(
+                        confirmation =
+                            confirmation,
+                        onResult = { result ->
+                            when (result) {
+                                is CarCommandDispatchResult.Submitted -> {
+                                    activeRequest =
+                                        result.request
+
+                                    requestState =
+                                        TypedRequestState.SUBMITTED
+                                }
+
+                                is CarCommandDispatchResult.ConfirmationRequired -> {
+                                    pendingConfirmation =
+                                        result
+
+                                    requestState =
+                                        TypedRequestState.CONFIRMATION_REQUIRED
+                                }
+
+                                is CarCommandDispatchResult.OutcomeUnknown -> {
+                                    pendingConfirmation =
+                                        null
+
+                                    activeRequest =
+                                        result.request
+
+                                    transportStatusForCurrentRequest =
+                                        null
+
+                                    failureMessage =
+                                        result.message
+
+                                    requestState =
+                                        TypedRequestState.OUTCOME_UNKNOWN
+
+                                    Log.w(
+                                        TAG,
+                                        "Confirmed command outcome unknown: " +
+                                            "id=${result.request.requestId}"
+                                    )
+                                }
+
+                                is CarCommandDispatchResult.Rejected -> {
+                                    rejectionReason =
+                                        typedDispatchRejectionText(
+                                            result.reason
+                                        )
+
+                                    requestState =
+                                        TypedRequestState.REJECTED
+                                }
+
+                                is CarCommandDispatchResult.Failed -> {
+                                    failureMessage =
+                                        result.message
+
+                                    requestState =
+                                        TypedRequestState.FAILED
+                                }
+                            }
+                        }
+                    )
+                }
+            ) {
+                Text(
+                    text =
+                        "Confirm Command"
+                )
+            }
+
+            Spacer(
+                modifier =
+                    Modifier.height(
+                        8.dp
+                    )
+            )
+
+            Button(
+                onClick = {
+                    val cancelled =
+                        dispatcher.cancelSensitiveCommand(
+                            confirmation =
+                                confirmation
+                        )
+
+                    pendingConfirmation =
+                        null
+
+                    rejectionReason =
+                        if (cancelled) {
+                            "sensitive command cancelled before transmission"
+                        } else {
+                            "confirmation was no longer valid"
+                        }
+
+                    requestState =
+                        TypedRequestState.REJECTED
+                }
+            ) {
+                Text(
+                    text =
+                        "Cancel Command"
+                )
+            }
+        }
+
+        Spacer(
+            modifier =
+                Modifier.height(
+                    16.dp
+                )
         )
 
         Text(
-            text = statusText,
-            style = MaterialTheme.typography.bodyMedium
+            text =
+                if (commandText.isBlank()) {
+                    "Entered: Nothing yet"
+                } else {
+                    "Entered: $commandText"
+                },
+            style =
+                MaterialTheme.typography.bodyLarge
         )
+
+        Spacer(
+            modifier =
+                Modifier.height(
+                    8.dp
+                )
+        )
+
+        Text(
+            text =
+                typedRequestStatusText(
+                    requestState =
+                        requestState,
+                    rejectionReason =
+                        rejectionReason,
+                    failureMessage =
+                        failureMessage
+                ),
+            style =
+                MaterialTheme.typography.bodyMedium
+        )
+
+        Spacer(
+            modifier =
+                Modifier.height(
+                    8.dp
+                )
+        )
+
+        Text(
+            text =
+                typedTransportStatusText(
+                    requestState =
+                        requestState,
+                    request =
+                        activeRequest,
+                    transportStatus =
+                        transportStatusForCurrentRequest
+                ),
+            style =
+                MaterialTheme.typography.bodyMedium
+        )
+    }
+}
+
+private fun typedDispatchRejectionText(
+    reason: String
+): String {
+    return when (reason) {
+        "empty_request" -> {
+            "empty request"
+        }
+
+        "unknown_command" -> {
+            "not a supported Phase 1 command"
+        }
+
+        "negated_command" -> {
+            "negated command was not transmitted"
+        }
+
+        "out_of_scope_command" -> {
+            "command is outside the Phase 1 safety scope"
+        }
+
+        "invalid_canonical_command" -> {
+            "command failed safety validation"
+        }
+
+        "module_not_configured" -> {
+            "vehicle module configuration is not ready"
+        }
+
+        else -> {
+            "request was rejected"
+        }
+    }
+}
+
+private fun typedRequestStatusText(
+    requestState: TypedRequestState,
+    rejectionReason: String?,
+    failureMessage: String?
+): String {
+    return when (requestState) {
+        TypedRequestState.READY -> {
+            "Ready for typed command"
+        }
+
+        TypedRequestState.EDITING -> {
+            "Ready to submit"
+        }
+
+        TypedRequestState.DISPATCHING -> {
+            "Validating and transmitting request"
+        }
+
+        TypedRequestState.CONFIRMATION_REQUIRED -> {
+            "Confirmation required before transmission"
+        }
+
+        TypedRequestState.REJECTED -> {
+            "Request rejected: " +
+                (
+                    rejectionReason
+                        ?: "request was not approved"
+                )
+        }
+
+        TypedRequestState.SUBMITTED -> {
+            "Request submitted"
+        }
+
+        TypedRequestState.TIMED_OUT -> {
+            "Request outcome unknown after response timeout"
+        }
+
+        TypedRequestState.OUTCOME_UNKNOWN -> {
+            "Request outcome unknown: " +
+                (
+                    failureMessage
+                        ?: "transmission may have started"
+                )
+        }
+
+        TypedRequestState.FAILED -> {
+            "Request failed: " +
+                (
+                    failureMessage
+                        ?: "transport failure"
+                )
+        }
+    }
+}
+
+private fun typedTransportStatusText(
+    requestState: TypedRequestState,
+    request: CarCommandRequest?,
+    transportStatus: CarStatusEvent?
+): String {
+    when (requestState) {
+        TypedRequestState.READY,
+        TypedRequestState.EDITING -> {
+            return "Transport: No typed request submitted"
+        }
+
+        TypedRequestState.DISPATCHING -> {
+            return "Transport: Preparing command request"
+        }
+
+        TypedRequestState.CONFIRMATION_REQUIRED -> {
+            return "Transport: Awaiting confirmation; no command transmitted"
+        }
+
+        TypedRequestState.REJECTED -> {
+            return "Transport: No command transmitted"
+        }
+
+        TypedRequestState.OUTCOME_UNKNOWN -> {
+            return "Transport: Transmission may have started; outcome unknown"
+        }
+
+        TypedRequestState.FAILED -> {
+            return "Transport: Command was not transmitted"
+        }
+
+        TypedRequestState.TIMED_OUT -> {
+            return "Transport: Response timeout; outcome unknown"
+        }
+
+        TypedRequestState.SUBMITTED -> {
+            /*
+             * Continue to the request-correlated transport status.
+             */
+        }
+    }
+
+    if (request == null) {
+        return "Transport: Waiting for request identity"
+    }
+
+    return when (transportStatus) {
+        null -> {
+            "Transport: Waiting for command status " +
+                "(id=${request.requestId})"
+        }
+
+        is CarStatusEvent.CommandSent -> {
+            "Transport: Request sent to BabyNodeCAN: " +
+                transportStatus.command.command +
+                " (id=${transportStatus.requestId})"
+        }
+
+        is CarStatusEvent.CommandResponse -> {
+            if (
+                transportStatus.status.equals(
+                    "ok",
+                    ignoreCase = true
+                )
+            ) {
+                "BabyNodeCAN: Request accepted " +
+                    "(id=${transportStatus.requestId})"
+            } else {
+                "BabyNodeCAN: Response " +
+                    transportStatus.status +
+                    " (id=${transportStatus.requestId})"
+            }
+        }
+
+        is CarStatusEvent.Error -> {
+            "Transport: Failed: " +
+                transportStatus.message +
+                " (id=${request.requestId})"
+        }
+
+        is CarStatusEvent.DeviceApprovalRequired,
+        is CarStatusEvent.Connected,
+        is CarStatusEvent.Disconnected -> {
+            /*
+             * General connection events do not belong to this typed
+             * request and are not rendered as its outcome.
+             */
+            "Transport: Waiting for command status " +
+                "(id=${request.requestId})"
+        }
     }
 }

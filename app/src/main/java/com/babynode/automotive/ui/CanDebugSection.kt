@@ -21,7 +21,7 @@ private const val TAG = "CanDebugSection"
 fun CanDebugSection(
     eventHistory: List<CarStatusEvent>
 ) {
-    Log.i(
+    Log.d(
         TAG,
         "Render CanDebugSection(): eventHistorySize=${eventHistory.size}"
     )
@@ -53,7 +53,7 @@ fun CanDebugSection(
 
                 val line = event.toLogLine()
 
-                Log.i(
+                Log.d(
                     TAG,
                     "Render log line: $line"
                 )
@@ -73,6 +73,10 @@ fun CanDebugSection(
 
 private fun CarStatusEvent.toLogLine(): String =
     when (this) {
+
+        is CarStatusEvent.DeviceApprovalRequired ->
+            "DEVICE APPROVAL REQUIRED: " +
+                "$deviceName [$deviceAddress]"
 
         is CarStatusEvent.Connected ->
             "CONNECTED: $transportName"
